@@ -12,11 +12,12 @@ const { extractTextFromImage } = require('./ocr');
 const { parseReceiptDetails } = require('./receiptParser');
 const { exportToExcel } = require('./excelExporter');
 const { parseReceiptWithAI, suggestCategory } = require('./aiReceiptParser');
+const { parseReceiptImageWithGemini, GEMINI_ENABLED } = require('./geminiReceiptParser');
 const { showMainMenu, handleCallbackQuery } = require('./menuHandler');
 const { COMMANDS } = require('../config/commands');
 
-// Cek apakah AI parsing tersedia (perlu ANTHROPIC_API_KEY)
-const AI_ENABLED = !!process.env.ANTHROPIC_API_KEY;
+// Cek apakah AI parsing tersedia
+const AI_ENABLED = !!process.env.ANTHROPIC_API_KEY;  // Anthropic Claude
 
 let transactionHistory = [];
 
@@ -311,29 +312,33 @@ function initTelegramBot(token) {
       const localPath = path.join(TMP_DIR, `struk_${Date.now()}.jpg`);
       await downloadFile(fileUrl, localPath);
 
-      // OCR: baca teks dari gambar
-      const text = await extractTextFromImage(localPath);
-
-      // Untuk receipt photo (screenshot app/struk digital), SELALU gunakan AI parser
-      // karena OCR sering gagal pada format ini
+      // Parsing struk - prioritas: Gemini Vision > Claude AI > OCR biasa
       let receiptDetails;
+      let text = '';
 
-      if (AI_ENABLED) {
-        // AI parser diutamakan untuk akurasi lebih baik
+      if (GEMINI_ENABLED) {
+        // PRIORITAS 1: Gemini Vision baca GAMBAR langsung (paling akurat)
         try {
-          bot.sendMessage(chatId, '🤖 Menggunakan AI untuk parsing yang akurat...');
+          bot.sendMessage(chatId, '🤖 Membaca struk dengan AI Vision...');
+          receiptDetails = await parseReceiptImageWithGemini(localPath);
+        } catch (gErr) {
+          console.error('⚠️  Gemini error, coba metode lain:', gErr.message);
+          text = await extractTextFromImage(localPath);
+          receiptDetails = parseReceiptDetails(text);
+        }
+      } else if (AI_ENABLED) {
+        // PRIORITAS 2: Claude AI (perlu OCR text dulu)
+        text = await extractTextFromImage(localPath);
+        try {
+          bot.sendMessage(chatId, '🤖 Menggunakan AI untuk parsing...');
           receiptDetails = await parseReceiptWithAI(text);
-
-          // Suggest kategori dengan AI
-          if (receiptDetails.items.length > 0) {
-            receiptDetails.suggested_category = await suggestCategory(receiptDetails.items);
-          }
         } catch (aiErr) {
-          console.error('⚠️  AI parsing error, fallback ke OCR:', aiErr.message);
+          console.error('⚠️  AI error, fallback OCR:', aiErr.message);
           receiptDetails = parseReceiptDetails(text);
         }
       } else {
-        // Jika AI tidak available, gunakan OCR biasa
+        // PRIORITAS 3: OCR biasa (tanpa AI)
+        text = await extractTextFromImage(localPath);
         receiptDetails = parseReceiptDetails(text);
       }
 
