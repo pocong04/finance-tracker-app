@@ -14,13 +14,36 @@
 require('dotenv').config();
 const { google } = require('googleapis');
 const path = require('path');
+const fs = require('fs');
 
-// Load service account credentials. The file must exist at the project root.
-const CREDENTIALS_PATH = path.resolve(__dirname, '../../credentials.json');
-const auth = new google.auth.GoogleAuth({
-  keyFile: CREDENTIALS_PATH,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
+// Load service account credentials.
+// Prioritas:
+//   1. Environment variable GOOGLE_CREDENTIALS_JSON (untuk cloud/Railway) - berisi isi JSON
+//   2. File credentials.json di root project (untuk lokal)
+function buildAuth() {
+  const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+
+  // Opsi 1: Credentials dari environment variable (cloud deployment)
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    try {
+      const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+      return new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
+    } catch (err) {
+      console.error('❌ GOOGLE_CREDENTIALS_JSON tidak valid:', err.message);
+    }
+  }
+
+  // Opsi 2: Credentials dari file lokal
+  const CREDENTIALS_PATH = path.resolve(__dirname, '../../credentials.json');
+  if (fs.existsSync(CREDENTIALS_PATH)) {
+    return new google.auth.GoogleAuth({ keyFile: CREDENTIALS_PATH, scopes: SCOPES });
+  }
+
+  console.error('❌ Tidak ada credentials! Set GOOGLE_CREDENTIALS_JSON atau letakkan credentials.json');
+  return new google.auth.GoogleAuth({ keyFile: CREDENTIALS_PATH, scopes: SCOPES });
+}
+
+const auth = buildAuth();
 
 /**
  * Get an authorized Google Sheets client.
