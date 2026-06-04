@@ -4,4 +4,8 @@ credentials.json
 .wwebjs_auth/
 .wwebjs_cache/
 exports/
+tmp/
 *.log
+
+# Claude Code local settings (bisa berisi API keys)
+.claude/

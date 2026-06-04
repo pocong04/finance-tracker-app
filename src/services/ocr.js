@@ -12,7 +12,7 @@ const Tesseract = require('tesseract.js');
 async function extractTextFromImage(imagePath) {
   try {
     console.log('🔍 Memproses OCR untuk:', imagePath);
-    const result = await Tesseract.recognize(imagePath, ['ind', 'eng']);
+    const result = await Tesseract.recognize(imagePath, 'eng');
     return result.data.text;
   } catch (err) {
     console.error('❌ Error OCR:', err.message);

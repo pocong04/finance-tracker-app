@@ -23,6 +23,44 @@ function fileToGenerativePart(imagePath) {
   };
 }
 
+function extractJsonObject(text) {
+  let jsonStr = String(text || '').trim();
+  const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonMatch) return jsonMatch[1].trim();
+
+  const firstBrace = jsonStr.indexOf('{');
+  const lastBrace = jsonStr.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return jsonStr.slice(firstBrace, lastBrace + 1);
+  }
+
+  return jsonStr;
+}
+
+function parseCurrency(value) {
+  if (typeof value === 'number') return value;
+  if (!value) return 0;
+
+  const raw = String(value).toLowerCase();
+  const cleaned = raw
+    .replace(/rp|idr|\s/g, '')
+    .replace(/,/g, '.')
+    .replace(/[^\d.]/g, '');
+
+  if (!cleaned) return 0;
+
+  // Singkatan umum: 50rb, 2jt, 1.5jt
+  if (raw.includes('jt') || raw.includes('juta')) return (Number(cleaned) || 0) * 1000000;
+  if (raw.includes('rb') || raw.includes('ribu') || raw.includes('k')) return (Number(cleaned) || 0) * 1000;
+
+  // Format Indonesia: 1.500.000 => 1500000
+  if (/^\d{1,3}(\.\d{3})+$/.test(cleaned)) {
+    return Number(cleaned.replace(/\./g, '')) || 0;
+  }
+
+  return Number(cleaned.replace(/\./g, '')) || Number(cleaned) || 0;
+}
+
 /**
  * Parse struk LANGSUNG dari gambar menggunakan Gemini Vision
  * Tidak perlu OCR — Gemini baca gambar secara native
@@ -32,7 +70,7 @@ function fileToGenerativePart(imagePath) {
 async function parseReceiptImageWithGemini(imagePath) {
   if (!genAI) throw new Error('GEMINI_API_KEY belum di-set');
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const prompt = `Analisa gambar struk/bukti transaksi ini dan ekstrak informasi dalam format JSON.
 
@@ -67,23 +105,20 @@ ATURAN PENTING:
     const result = await model.generateContent([prompt, imagePart]);
     const responseText = result.response.text();
 
-    // Extract JSON dari response (kadang ada markdown code block)
-    let jsonStr = responseText.trim();
-    const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) jsonStr = jsonMatch[1].trim();
-
-    const parsed = JSON.parse(jsonStr);
+    // Extract JSON dari response (kadang Gemini menambah teks/markdown)
+    const parsed = JSON.parse(extractJsonObject(responseText));
+    const total = parseCurrency(parsed.total || parsed.amount || parsed.nominal);
 
     return {
-      store_name: parsed.store_name || 'Struk',
+      store_name: parsed.store_name || parsed.merchant || parsed.sender || 'Struk',
       address: parsed.address || '',
       date: parsed.date || new Date().toISOString().split('T')[0],
       time: parsed.time || new Date().toTimeString().substring(0, 5),
       items: Array.isArray(parsed.items) ? parsed.items : [],
-      total: Number(parsed.total) || 0,
+      total,
       payment_method: parsed.payment_method || 'cash',
-      transaction_type: parsed.transaction_type || 'pengeluaran',
-      category: parsed.category || 'lainnya',
+      transaction_type: parsed.transaction_type || parsed.type || 'pengeluaran',
+      category: parsed.category || parsed.suggested_category || 'lainnya',
       currency: 'IDR',
     };
   } catch (err) {
@@ -99,7 +134,7 @@ ATURAN PENTING:
 async function parseTextWithGemini(text) {
   if (!genAI) throw new Error('GEMINI_API_KEY belum di-set');
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const prompt = `Analisa kalimat transaksi keuangan ini: "${text}"
 
@@ -122,14 +157,10 @@ ATURAN:
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
 
-    let jsonStr = responseText.trim();
-    const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) jsonStr = jsonMatch[1].trim();
-
-    const parsed = JSON.parse(jsonStr);
+    const parsed = JSON.parse(extractJsonObject(responseText));
     return {
-      amount: Number(parsed.amount) || 0,
-      type: parsed.type || 'pengeluaran',
+      amount: parseCurrency(parsed.amount || parsed.total || parsed.nominal),
+      type: parsed.type || parsed.transaction_type || 'pengeluaran',
       category: parsed.category || 'lainnya',
       note: parsed.note || text,
     };
