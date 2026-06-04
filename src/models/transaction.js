@@ -28,8 +28,13 @@ const KEYWORD_MAP = {
 };
 
 // Keywords untuk deteksi PEMASUKAN vs PENGELUARAN
-const INCOME_KEYWORDS = ['pemasukan', 'masuk', 'dapat', 'terima', 'dapat dari', 'pendapatan', '+'];
+const INCOME_KEYWORDS = [
+  'pemasukan', 'masuk', 'dapat', 'terima', 'dapat dari', 'pendapatan', '+',
+  'transfer', 'transfer masuk', 'uang masuk', 'diterima', 'kirim ke saya',
+  'bayar ke saya', 'top up', 'topup', 'bayar dari', 'kiriman'
+];
 const EXPENSE_KEYWORDS = ['pengeluaran', 'keluar', 'bayar', 'beli', 'habis', 'biaya', 'bayaran', '-'];
+
 
 
 /**
