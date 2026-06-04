@@ -8,7 +8,9 @@ const path = require('path');
 const https = require('https');
 const { parseTransaction, transactionSummaryMessage, helpMessage } = require('../models/transaction');
 const { appendTransaction, getTransactions, clearAllTransactions, deleteLastTransaction } = require('./googleSheets');
-const { extractTextFromImage, parseReceiptText } = require('./ocr');
+const { extractTextFromImage } = require('./ocr');
+const { parseReceiptDetails } = require('./receiptParser');
+const { exportToExcel } = require('./excelExporter');
 
 let transactionHistory = [];
 
@@ -147,6 +149,35 @@ function initTelegramBot(token) {
       { parse_mode: 'Markdown' });
   });
 
+  // Handler: /export (generate Excel file)
+  bot.onText(/\/export(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    if (!isAllowed(chatId)) return;
+
+    const month = match[1] || new (require('dayjs'))().format('YYYY-MM');
+
+    bot.sendMessage(chatId, '📊 Sedang membuat file Excel...');
+
+    try {
+      const txs = await getTransactions({ month });
+      if (txs.length === 0) {
+        bot.sendMessage(chatId, `❌ Tidak ada transaksi untuk bulan ${month}`);
+        return;
+      }
+
+      const filepath = await exportToExcel(txs, month);
+      const filename = `Keuangan_${month}.xlsx`;
+
+      // Kirim file Excel
+      bot.sendDocument(chatId, filepath, {
+        caption: `✅ Laporan Keuangan ${month}\n📋 Total: ${txs.length} transaksi`
+      });
+    } catch (err) {
+      console.error('❌ Error export:', err.message);
+      bot.sendMessage(chatId, `❌ Gagal membuat Excel: ${err.message}`);
+    }
+  });
+
   // Handler konfirmasi reset (cek di message handler global)
   bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -247,13 +278,13 @@ function initTelegramBot(token) {
 
       // OCR: baca teks dari gambar
       const text = await extractTextFromImage(localPath);
-      const receipt = parseReceiptText(text);
+      const receiptDetails = parseReceiptDetails(text);  // Parse detail struk
 
       // Hapus file sementara
       fs.unlink(localPath, () => {});
 
-      if (receipt.amount > 0) {
-        // Cek apakah user kirim caption manual (misal: "makanan" atau "50000 makanan makan siang")
+      if (receiptDetails.total > 0) {
+        // Cek apakah user kirim caption manual
         let tx;
         if (caption) {
           const parsed = parseTransaction(caption);
@@ -262,18 +293,24 @@ function initTelegramBot(token) {
           }
         }
 
-        // Jika tidak ada caption valid, gunakan hasil OCR
+        // Jika tidak ada caption valid, gunakan hasil OCR detail
         if (!tx) {
           const dayjs = require('dayjs');
+          const itemsDesc = receiptDetails.items
+            .map(item => `${item.description} (${item.formatted_price})`)
+            .join(', ')
+            .substring(0, 100);
+
           tx = {
             timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            date: dayjs().format('YYYY-MM-DD'),
+            date: receiptDetails.date,
             month: dayjs().format('YYYY-MM'),
             type: 'pengeluaran',
-            amount: receipt.amount,
-            category: receipt.category,
-            note: `[Struk] ${receipt.note.substring(0, 80)}`,
-            formattedAmount: 'Rp ' + receipt.amount.toLocaleString('id-ID'),
+            amount: receiptDetails.total,
+            category: 'belanja', // Default kategori untuk struk
+            note: `[${receiptDetails.store_name}] ${itemsDesc}`,
+            formattedAmount: receiptDetails.total > 0 ?
+              'Rp ' + receiptDetails.total.toLocaleString('id-ID') : 'Rp 0',
           };
         }
 
@@ -281,19 +318,20 @@ function initTelegramBot(token) {
         transactionHistory.push(tx);
 
         const summaryMsg = `📸 *Struk Berhasil Dibaca!*\n\n` +
-          `📅 Tanggal: ${tx.date}\n` +
-          `💵 Jumlah: ${tx.formattedAmount}\n` +
-          `🏷️ Kategori: ${tx.category}\n` +
-          `📝 Catatan: ${tx.note}\n\n` +
+          `🏪 Toko: ${receiptDetails.store_name}\n` +
+          `📅 Tanggal: ${receiptDetails.date} ${receiptDetails.time}\n` +
+          `💳 Metode: ${receiptDetails.payment_method}\n` +
+          `💵 Total: ${tx.formattedAmount}\n` +
+          `📋 Item: ${receiptDetails.items.length} barang\n` +
+          `🏷️ Kategori: ${tx.category}\n\n` +
           `✅ Transaksi tersimpan di Google Sheet!`;
 
         bot.sendMessage(chatId, summaryMsg, { parse_mode: 'Markdown' });
       } else {
-        // OCR tidak menemukan angka - tampilkan teks mentah
         const failMsg = `⚠️ *Tidak bisa membaca jumlah dari struk.*\n\n` +
-          `📄 Teks yang terbaca:\n\`\`\`\n${receipt.fullText.substring(0, 300)}\n\`\`\`\n\n` +
-          `💡 *Tips:* Kirim foto struk disertai caption manual, contoh:\n` +
-          `_50000 makanan nasi goreng_`;
+          `🏪 Toko: ${receiptDetails.store_name || 'Tidak terdeteksi'}\n` +
+          `📝 Teks:\n\`\`\`\n${text.substring(0, 200)}\n\`\`\`\n\n` +
+          `💡 Kirim ulang dengan foto lebih jelas atau caption:\n_100rb belanja_`;
 
         bot.sendMessage(chatId, failMsg, { parse_mode: 'Markdown' });
       }
