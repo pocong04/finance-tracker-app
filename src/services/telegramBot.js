@@ -314,13 +314,14 @@ function initTelegramBot(token) {
       // OCR: baca teks dari gambar
       const text = await extractTextFromImage(localPath);
 
-      // Parse dengan dua cara: biasa dan AI (jika AI enabled)
-      let receiptDetails = parseReceiptDetails(text);
+      // Untuk receipt photo (screenshot app/struk digital), SELALU gunakan AI parser
+      // karena OCR sering gagal pada format ini
+      let receiptDetails;
 
-      // Jika parsing biasa tidak ketemu total, coba pakai AI parser
-      if (receiptDetails.total === 0 && AI_ENABLED) {
+      if (AI_ENABLED) {
+        // AI parser diutamakan untuk akurasi lebih baik
         try {
-          bot.sendMessage(chatId, '🤖 Menggunakan AI untuk parsing yang lebih akurat...');
+          bot.sendMessage(chatId, '🤖 Menggunakan AI untuk parsing yang akurat...');
           receiptDetails = await parseReceiptWithAI(text);
 
           // Suggest kategori dengan AI
@@ -328,9 +329,12 @@ function initTelegramBot(token) {
             receiptDetails.suggested_category = await suggestCategory(receiptDetails.items);
           }
         } catch (aiErr) {
-          console.error('⚠️  AI parsing fallback error:', aiErr.message);
-          // Lanjut dengan parsing biasa jika AI gagal
+          console.error('⚠️  AI parsing error, fallback ke OCR:', aiErr.message);
+          receiptDetails = parseReceiptDetails(text);
         }
+      } else {
+        // Jika AI tidak available, gunakan OCR biasa
+        receiptDetails = parseReceiptDetails(text);
       }
 
       // Hapus file sementara
@@ -346,36 +350,42 @@ function initTelegramBot(token) {
           }
         }
 
-        // Jika tidak ada caption valid, gunakan hasil OCR detail
+        // Jika tidak ada caption valid, gunakan hasil AI/OCR detail
         if (!tx) {
           const dayjs = require('dayjs');
           const itemsDesc = receiptDetails.items
-            .map(item => `${item.description} (${item.formatted_price})`)
+            .map(item => item.description + (item.total_price ? ` (Rp ${Number(item.total_price).toLocaleString('id-ID')})` : ''))
             .join(', ')
             .substring(0, 100);
+
+          // Gunakan transaction_type & category dari AI (jika ada)
+          // Default: pengeluaran/belanja untuk struk toko biasa
+          const txType = receiptDetails.transaction_type || 'pengeluaran';
+          const txCategory = receiptDetails.category ||
+            receiptDetails.suggested_category || 'belanja';
 
           tx = {
             timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
             date: receiptDetails.date,
             month: dayjs().format('YYYY-MM'),
-            type: 'pengeluaran',
+            type: txType,
             amount: receiptDetails.total,
-            category: 'belanja', // Default kategori untuk struk
-            note: `[${receiptDetails.store_name}] ${itemsDesc}`,
-            formattedAmount: receiptDetails.total > 0 ?
-              'Rp ' + receiptDetails.total.toLocaleString('id-ID') : 'Rp 0',
+            category: txCategory,
+            note: `[${receiptDetails.store_name}] ${itemsDesc || receiptDetails.payment_method}`,
+            formattedAmount: 'Rp ' + Number(receiptDetails.total).toLocaleString('id-ID'),
           };
         }
 
         await appendTransaction(tx);
         transactionHistory.push(tx);
 
+        const typeEmoji = tx.type === 'pemasukan' ? '📥' : '📤';
         const summaryMsg = `📸 *Struk Berhasil Dibaca!*\n\n` +
-          `🏪 Toko: ${receiptDetails.store_name}\n` +
+          `🏪 Toko/Sumber: ${receiptDetails.store_name}\n` +
           `📅 Tanggal: ${receiptDetails.date} ${receiptDetails.time}\n` +
           `💳 Metode: ${receiptDetails.payment_method}\n` +
+          `${typeEmoji} Tipe: ${tx.type.toUpperCase()}\n` +
           `💵 Total: ${tx.formattedAmount}\n` +
-          `📋 Item: ${receiptDetails.items.length} barang\n` +
           `🏷️ Kategori: ${tx.category}\n\n` +
           `✅ Transaksi tersimpan di Google Sheet!`;
 

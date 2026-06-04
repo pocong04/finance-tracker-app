@@ -4,7 +4,8 @@
       "Bash(node -e ' *)",
       "Bash(npm install *)",
       "Bash(node --check src/services/menuHandler.js)",
-      "Bash(node --check src/config/commands.js)"
+      "Bash(node --check src/config/commands.js)",
+      "Bash(node --check src/services/aiReceiptParser.js)"
     ]
   }
 }

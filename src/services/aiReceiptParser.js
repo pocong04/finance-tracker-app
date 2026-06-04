@@ -38,17 +38,24 @@ Please extract and return ONLY valid JSON (no markdown, no code blocks) with thi
   "discount": 0,
   "total": "total pembayaran dalam angka",
   "payment_method": "cash/debit/credit/transfer/dll",
+  "transaction_type": "pemasukan atau pengeluaran",
+  "category": "kategori yang sesuai",
   "currency": "IDR"
 }
 
 Rules:
 - Extract ALL items from the receipt
-- Parse prices as numbers (remove Rp, commas, periods except decimal)
+- Parse prices as numbers PRECISELY (remove Rp, dots as thousand separators, commas)
+- IMPORTANT: "Rp1.500.000" = 1500000 (titik adalah pemisah ribuan, BUKAN desimal)
+- IMPORTANT: "Rp 2.136" jika konteksnya saldo/transfer besar, baca angka penuh dengan benar
 - If date/time not found, use current date/time
-- If payment method unclear, default to "cash"
-- If store name unclear, use first line of receipt
-- total MUST be the final amount paid
-- Items should be array of objects with description and price
+- transaction_type: Jika teks mengandung "Transfer Masuk", "uang masuk", "menerima transfer", "kredit", "saldo masuk" => "pemasukan"
+- transaction_type: Jika "Transfer Keluar", "pembayaran", "belanja", "pembelian" => "pengeluaran"
+- transaction_type DEFAULT untuk struk belanja toko => "pengeluaran"
+- category options: makanan, minuman, transport, belanja, tagihan, hiburan, kesehatan, pendidikan, gaji, freelance, investasi, tabungan, transfer, lainnya
+- Untuk "Transfer Masuk" gunakan category "transfer" atau "lainnya"
+- Untuk notifikasi bank/transfer, store_name = pengirim atau "Transfer Bank"
+- total MUST be the EXACT amount (untuk transfer masuk, ambil nominal transfer)
 - Return ONLY valid JSON, no extra text`;
 
     const response = await client.messages.create({
@@ -88,6 +95,8 @@ Rules:
       discount: Number(parsedReceipt.discount) || 0,
       total: Number(parsedReceipt.total) || 0,
       payment_method: parsedReceipt.payment_method || 'cash',
+      transaction_type: parsedReceipt.transaction_type || 'pengeluaran',
+      category: parsedReceipt.category || 'lainnya',
       currency: parsedReceipt.currency || 'IDR'
     };
   } catch (err) {
