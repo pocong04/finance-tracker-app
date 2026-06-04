@@ -90,14 +90,15 @@ Kembalikan HANYA JSON valid (tanpa markdown, tanpa code block) dengan struktur:
 
 ATURAN PENTING:
 - Parse angka dengan TEPAT: "Rp1.500.000" = 1500000 (titik = pemisah ribuan)
-- transaction_type: jika "Transfer Masuk", "uang masuk", "menerima transfer", "saldo masuk", "kredit" => "pemasukan"
-- transaction_type: jika "Transfer Keluar", "pembayaran", "belanja", "pembelian", struk toko => "pengeluaran"
+- transaction_type: jika jelas tertulis "Transfer Masuk", "uang masuk", "menerima transfer", "saldo masuk", "kredit", atau uang diterima KE akun pengguna => "pemasukan"
+- transaction_type: jika jelas tertulis "Transfer Keluar", "pembayaran", "belanja", "pembelian", struk toko, atau uang DIKIRIM dari akun pengguna => "pengeluaran"
+- PENTING untuk bukti transfer bank/e-wallet: label "Pembayaran Diterima" atau "Hasil Transfer" TIDAK otomatis berarti pemasukan. Jika tampilan menunjukkan alur "Dari" → "Ke" dan ada penerima di bagian "Ke", itu adalah bukti transfer keluar/pembayaran, maka transaction_type = "pengeluaran" dan category = "transfer".
+- Jika ada field "Dari" dan "Ke": store_name harus nama penerima/tujuan di bagian "Ke" untuk transfer keluar; untuk transfer masuk gunakan nama pengirim di bagian "Dari".
 - Untuk struk belanja toko (Indomaret, Alfamart, resto, dll) => "pengeluaran"
-- Untuk notifikasi transfer masuk bank => "pemasukan"
+- Untuk notifikasi transfer masuk bank yang eksplisit menyatakan uang masuk ke rekening pengguna => "pemasukan"
 - category options: makanan, minuman, transport, belanja, tagihan, hiburan, kesehatan, pendidikan, gaji, freelance, investasi, tabungan, transfer, lainnya
-- Untuk transfer masuk gunakan category "transfer"
+- Untuk semua transfer gunakan category "transfer"
 - total HARUS nominal transaksi yang BENAR & PERSIS
-- Jika ini notifikasi transfer, store_name = nama pengirim atau "Transfer Masuk"
 - Kembalikan HANYA JSON, tanpa teks tambahan`;
 
   try {
