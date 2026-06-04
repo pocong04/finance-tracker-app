@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check src/services/telegramBot.js)",
+      "Bash(node --check src/services/googleSheets.js)"
+    ]
+  }
+}

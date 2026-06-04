@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { parseTransaction, transactionSummaryMessage, helpMessage } = require('../models/transaction');
-const { appendTransaction, getTransactions } = require('./googleSheets');
+const { appendTransaction, getTransactions, clearAllTransactions, deleteLastTransaction } = require('./googleSheets');
 const { extractTextFromImage, parseReceiptText } = require('./ocr');
 
 let transactionHistory = [];
@@ -103,18 +103,72 @@ function initTelegramBot(token) {
     }
   });
 
-  // Handler: /undo (hapus transaksi terakhir dari history lokal)
-  bot.onText(/\/undo/, (msg) => {
+  // Handler: /undo atau /delete (hapus transaksi terakhir dari Google Sheet)
+  bot.onText(/\/(undo|delete)/, async (msg) => {
     const chatId = msg.chat.id;
     if (!isAllowed(chatId)) return;
 
-    if (transactionHistory.length === 0) {
-      bot.sendMessage(chatId, '❌ Tidak ada transaksi untuk dihapus.');
-      return;
-    }
+    try {
+      const all = await getTransactions({});
+      if (all.length === 0) {
+        bot.sendMessage(chatId, '❌ Tidak ada transaksi untuk dihapus.');
+        return;
+      }
 
-    const last = transactionHistory.pop();
-    bot.sendMessage(chatId, `✅ Transaksi dihapus:\n${transactionSummaryMessage(last)}`, { parse_mode: 'Markdown' });
+      const last = all[all.length - 1];
+      await deleteLastTransaction();
+      // Sinkronkan history lokal
+      transactionHistory.pop();
+
+      bot.sendMessage(chatId,
+        `✅ *Transaksi Terakhir Dihapus!*\n\n` +
+        `💵 Jumlah: ${last.formattedAmount || ('Rp ' + Number(last.amount).toLocaleString('id-ID'))}\n` +
+        `🏷️ Kategori: ${last.category}\n` +
+        `📝 Catatan: ${last.note}`,
+        { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ Error delete:', err.message);
+      bot.sendMessage(chatId, `❌ Gagal menghapus transaksi: ${err.message}`);
+    }
+  });
+
+  // Handler: /reset (hapus SEMUA transaksi) - butuh konfirmasi
+  const pendingReset = {}; // chatId -> true jika menunggu konfirmasi
+
+  bot.onText(/\/reset/, (msg) => {
+    const chatId = msg.chat.id;
+    if (!isAllowed(chatId)) return;
+
+    pendingReset[chatId] = true;
+    bot.sendMessage(chatId,
+      `⚠️ *PERINGATAN: Hapus Semua Data?*\n\n` +
+      `Semua transaksi di Google Sheet akan dihapus PERMANEN.\n\n` +
+      `Ketik *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan.`,
+      { parse_mode: 'Markdown' });
+  });
+
+  // Handler konfirmasi reset (cek di message handler global)
+  bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    if (!isAllowed(chatId)) return;
+    if (!msg.text) return;
+    if (!pendingReset[chatId]) return; // Hanya proses jika sedang menunggu konfirmasi reset
+
+    const answer = msg.text.trim().toUpperCase();
+    if (answer === 'YA') {
+      delete pendingReset[chatId];
+      try {
+        await clearAllTransactions();
+        transactionHistory.length = 0;
+        bot.sendMessage(chatId, '✅ *Semua data berhasil dihapus!*\n\nGoogle Sheet sekarang kosong. Anda bisa mulai mencatat dari awal.', { parse_mode: 'Markdown' });
+      } catch (err) {
+        console.error('❌ Error reset:', err.message);
+        bot.sendMessage(chatId, `❌ Gagal reset data: ${err.message}`);
+      }
+    } else if (answer === 'BATAL') {
+      delete pendingReset[chatId];
+      bot.sendMessage(chatId, '✅ Reset dibatalkan. Data Anda aman.');
+    }
   });
 
   // Handler: /summary [YYYY-MM]

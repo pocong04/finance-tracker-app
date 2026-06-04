@@ -122,4 +122,54 @@ async function getTransactions(opts = {}) {
   return result;
 }
 
-module.exports = { appendTransaction, getTransactions };
+/**
+ * Delete ALL rows in the Transactions sheet (except header if present).
+ * This is used for a full reset of the data.
+ */
+async function clearAllTransactions() {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  const sheets = await getSheets();
+  // Clear all content in the sheet
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: sheetId,
+    range: 'Transactions!A:H',
+  });
+}
+
+/**
+ * Delete the last transaction row (the most recent entry).
+ */
+async function deleteLastTransaction() {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  const sheets = await getSheets();
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: 'Transactions!A:H',
+  });
+  const rows = resp.data.values ? resp.data.values.length : 0;
+  if (rows <= 1) return; // nothing to delete or only header
+
+  // Delete last data row
+  const rowIndex = rows - 1;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId: 0,
+            dimension: 'ROWS',
+            startIndex: rowIndex,
+            endIndex: rowIndex + 1,
+          },
+        },
+      }],
+    },
+  });
+}
+
+module.exports = { appendTransaction, getTransactions, clearAllTransactions, deleteLastTransaction };
