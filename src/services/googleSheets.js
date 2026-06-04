@@ -1,29 +1,35 @@
 // src/services/googleSheets.js
 // Service for interacting with Google Sheets to store and retrieve finance transactions.
 // ------------------------------------------------------------
-// Prerequisites:
-//   - A Google Cloud project with the Google Sheets API enabled.
-//   - A service account JSON key saved as `credentials.json` in the project root.
-//   - The spreadsheet ID should be set in the .env file as GOOGLE_SHEET_ID.
-//
-// This module exports two main functions:
-//   1. appendTransaction(tx) – Append a transaction row to the sheet.
-//   2. getTransactions({month}) – Retrieve transactions, optionally filtered by month.
-// ------------------------------------------------------------
 
 require('dotenv').config();
 const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
 
-// Load service account credentials.
-// Prioritas:
-//   1. Environment variable GOOGLE_CREDENTIALS_JSON (untuk cloud/Railway) - berisi isi JSON
-//   2. File credentials.json di root project (untuk lokal)
+const TRANSACTIONS_SHEET = 'Transactions';
+const RECEIPT_ITEMS_SHEET = 'ReceiptItems';
+const RECEIPT_ITEM_HEADERS = [
+  'receipt_id',
+  'transaction_timestamp',
+  'date',
+  'month',
+  'store_name',
+  'payment_method',
+  'item_index',
+  'description',
+  'quantity',
+  'unit_price',
+  'total_price',
+  'category',
+  'transaction_type',
+  'raw_note',
+  'created_at',
+];
+
 function buildAuth() {
   const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
-  // Opsi 1: Credentials dari environment variable (cloud deployment)
   if (process.env.GOOGLE_CREDENTIALS_JSON) {
     try {
       const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
@@ -33,7 +39,6 @@ function buildAuth() {
     }
   }
 
-  // Opsi 2: Credentials dari file lokal
   const CREDENTIALS_PATH = path.resolve(__dirname, '../../credentials.json');
   if (fs.existsSync(CREDENTIALS_PATH)) {
     return new google.auth.GoogleAuth({ keyFile: CREDENTIALS_PATH, scopes: SCOPES });
@@ -45,19 +50,46 @@ function buildAuth() {
 
 const auth = buildAuth();
 
-/**
- * Get an authorized Google Sheets client.
- */
 async function getSheets() {
   const client = await auth.getClient();
   return google.sheets({ version: 'v4', auth: client });
 }
 
-/**
- * Append a transaction to the configured spreadsheet.
- * @param {Object} tx - Transaction object with the following properties:
- *   timestamp, date, month, type, amount, category, note, formattedAmount
- */
+async function ensureSheetExists(title, headers = []) {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  const sheets = await getSheets();
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+  const exists = (spreadsheet.data.sheets || []).some(s => s.properties.title === title);
+
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        requests: [{ addSheet: { properties: { title } } }],
+      },
+    });
+  }
+
+  if (headers.length) {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${title}!A1:Z1`,
+    }).catch(() => ({ data: { values: [] } }));
+
+    const firstRow = resp.data.values && resp.data.values[0] ? resp.data.values[0] : [];
+    if (!firstRow.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `${title}!A1:${String.fromCharCode(64 + headers.length)}1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headers] },
+      });
+    }
+  }
+}
+
 async function appendTransaction(tx) {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
@@ -76,19 +108,13 @@ async function appendTransaction(tx) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
-    range: 'Transactions!A:H', // expects a sheet named "Transactions"
+    range: `${TRANSACTIONS_SHEET}!A:H`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [values] },
   });
 }
 
-/**
- * Retrieve transactions from the sheet.
- * @param {Object} opts
- * @param {string} [opts.month] - Optional "YYYY-MM" string to filter rows.
- * @returns {Promise<Array<Object>>}
- */
 async function getTransactions(opts = {}) {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
@@ -96,11 +122,10 @@ async function getTransactions(opts = {}) {
   const sheets = await getSheets();
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: 'Transactions!A:H',
+    range: `${TRANSACTIONS_SHEET}!A:H`,
   });
 
   const rows = resp.data.values || [];
-  // Header row is optional; if present, skip it when it contains the word "timestamp".
   const dataRows = rows[0] && rows[0][0] && rows[0][0].toLowerCase().includes('timestamp')
     ? rows.slice(1)
     : rows;
@@ -116,31 +141,117 @@ async function getTransactions(opts = {}) {
     formattedAmount: r[7],
   }));
 
-  if (opts.month) {
-    return result.filter(t => t.month === opts.month);
+  if (opts.month) return result.filter(t => t.month === opts.month);
+  return result;
+}
+
+async function appendReceiptItems(receiptItems) {
+  if (!Array.isArray(receiptItems) || !receiptItems.length) return;
+
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  await ensureSheetExists(RECEIPT_ITEMS_SHEET, RECEIPT_ITEM_HEADERS);
+  const sheets = await getSheets();
+  const values = receiptItems.map(item => [
+    item.receipt_id,
+    item.transaction_timestamp,
+    item.date,
+    item.month,
+    item.store_name,
+    item.payment_method,
+    item.item_index,
+    item.description,
+    item.quantity,
+    item.unit_price,
+    item.total_price,
+    item.category,
+    item.transaction_type,
+    item.raw_note,
+    item.created_at,
+  ]);
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values },
+  });
+}
+
+async function getReceiptItems(opts = {}) {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  await ensureSheetExists(RECEIPT_ITEMS_SHEET, RECEIPT_ITEM_HEADERS);
+  const sheets = await getSheets();
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+  });
+
+  const rows = resp.data.values || [];
+  const dataRows = rows[0] && rows[0][0] && rows[0][0].toLowerCase().includes('receipt_id')
+    ? rows.slice(1)
+    : rows;
+
+  let result = dataRows.map(r => ({
+    receipt_id: r[0],
+    transaction_timestamp: r[1],
+    date: r[2],
+    month: r[3],
+    store_name: r[4],
+    payment_method: r[5],
+    item_index: Number(r[6]) || 0,
+    description: r[7],
+    quantity: Number(r[8]) || 1,
+    unit_price: Number(r[9]) || 0,
+    total_price: Number(r[10]) || 0,
+    category: r[11],
+    transaction_type: r[12],
+    raw_note: r[13],
+    created_at: r[14],
+  }));
+
+  if (opts.month) result = result.filter(item => item.month === opts.month);
+  if (opts.receiptId) result = result.filter(item => item.receipt_id === opts.receiptId);
+  if (opts.transactionTimestamp) {
+    result = result.filter(item => item.transaction_timestamp === opts.transactionTimestamp);
   }
   return result;
 }
 
-/**
- * Delete ALL rows in the Transactions sheet (except header if present).
- * This is used for a full reset of the data.
- */
 async function clearAllTransactions() {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
 
   const sheets = await getSheets();
-  // Clear all content in the sheet
   await sheets.spreadsheets.values.clear({
     spreadsheetId: sheetId,
-    range: 'Transactions!A:H',
+    range: `${TRANSACTIONS_SHEET}!A:H`,
   });
 }
 
-/**
- * Delete the last transaction row (the most recent entry).
- */
+async function clearAllReceiptItems() {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  await ensureSheetExists(RECEIPT_ITEMS_SHEET, RECEIPT_ITEM_HEADERS);
+  const sheets = await getSheets();
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: sheetId,
+    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${RECEIPT_ITEMS_SHEET}!A1:O1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [RECEIPT_ITEM_HEADERS] },
+  });
+}
+
 async function deleteLastTransaction() {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
@@ -148,20 +259,23 @@ async function deleteLastTransaction() {
   const sheets = await getSheets();
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: 'Transactions!A:H',
+    range: `${TRANSACTIONS_SHEET}!A:H`,
   });
   const rows = resp.data.values ? resp.data.values.length : 0;
-  if (rows <= 1) return; // nothing to delete or only header
+  if (rows <= 1) return;
 
-  // Delete last data row
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+  const sheet = (spreadsheet.data.sheets || []).find(s => s.properties.title === TRANSACTIONS_SHEET);
+  const numericSheetId = sheet ? sheet.properties.sheetId : 0;
   const rowIndex = rows - 1;
+
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: sheetId,
     requestBody: {
       requests: [{
         deleteDimension: {
           range: {
-            sheetId: 0,
+            sheetId: numericSheetId,
             dimension: 'ROWS',
             startIndex: rowIndex,
             endIndex: rowIndex + 1,
@@ -172,4 +286,38 @@ async function deleteLastTransaction() {
   });
 }
 
-module.exports = { appendTransaction, getTransactions, clearAllTransactions, deleteLastTransaction };
+async function deleteReceiptItemsByTransactionTimestamp(timestamp) {
+  if (!timestamp) return;
+
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  const items = await getReceiptItems({});
+  const remaining = items.filter(item => item.transaction_timestamp !== timestamp);
+  const sheets = await getSheets();
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: sheetId,
+    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${RECEIPT_ITEMS_SHEET}!A1:O1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [RECEIPT_ITEM_HEADERS] },
+  });
+
+  if (remaining.length) await appendReceiptItems(remaining);
+}
+
+module.exports = {
+  appendTransaction,
+  getTransactions,
+  clearAllTransactions,
+  deleteLastTransaction,
+  appendReceiptItems,
+  getReceiptItems,
+  clearAllReceiptItems,
+  deleteReceiptItemsByTransactionTimestamp,
+};

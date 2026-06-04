@@ -7,7 +7,16 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { parseTransaction, transactionSummaryMessage, helpMessage } = require('../models/transaction');
-const { appendTransaction, getTransactions, clearAllTransactions, deleteLastTransaction } = require('./googleSheets');
+const {
+  appendTransaction,
+  getTransactions,
+  clearAllTransactions,
+  deleteLastTransaction,
+  appendReceiptItems,
+  getReceiptItems,
+  clearAllReceiptItems,
+  deleteReceiptItemsByTransactionTimestamp,
+} = require('./googleSheets');
 const { extractTextFromImage } = require('./ocr');
 const { parseReceiptDetails } = require('./receiptParser');
 const { exportToExcel } = require('./excelExporter');
@@ -38,6 +47,47 @@ function downloadFile(url, dest) {
       fs.unlink(dest, () => reject(err));
     });
   });
+}
+
+function parseItemAmount(value) {
+  if (typeof value === 'number') return value;
+  if (!value) return 0;
+  const cleaned = String(value).replace(/rp|idr|\s/gi, '').replace(/[.,]/g, '').replace(/\D/g, '');
+  return Number(cleaned) || 0;
+}
+
+function normalizeReceiptItems(receiptDetails, tx, receiptId) {
+  const dayjs = require('dayjs');
+  const items = Array.isArray(receiptDetails.items) ? receiptDetails.items : [];
+
+  return items
+    .map((item, index) => {
+      const description = item.description || item.name || item.item || '';
+      const quantity = Number(item.quantity || item.qty) || 1;
+      const unitPrice = parseItemAmount(item.unit_price || item.unitPrice || item.price);
+      const totalPrice = parseItemAmount(item.total_price || item.totalPrice || item.amount || item.price);
+
+      if (!description && !totalPrice) return null;
+
+      return {
+        receipt_id: receiptId,
+        transaction_timestamp: tx.timestamp,
+        date: tx.date,
+        month: tx.month,
+        store_name: receiptDetails.store_name || 'Struk',
+        payment_method: receiptDetails.payment_method || '',
+        item_index: index + 1,
+        description: description || `Item ${index + 1}`,
+        quantity,
+        unit_price: unitPrice,
+        total_price: totalPrice || unitPrice * quantity,
+        category: item.category || tx.category,
+        transaction_type: tx.type,
+        raw_note: tx.note,
+        created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+      };
+    })
+    .filter(Boolean);
 }
 
 function initTelegramBot(token) {
@@ -155,6 +205,11 @@ function initTelegramBot(token) {
 
       const last = all[all.length - 1];
       await deleteLastTransaction();
+      try {
+        await deleteReceiptItemsByTransactionTimestamp(last.timestamp);
+      } catch (itemErr) {
+        console.error('⚠️  Gagal menghapus detail item struk:', itemErr.message);
+      }
       // Sinkronkan history lokal
       transactionHistory.pop();
 
@@ -201,13 +256,22 @@ function initTelegramBot(token) {
         return;
       }
 
-      const filepath = await exportToExcel(txs, month);
+      let receiptItems = [];
+      try {
+        receiptItems = await getReceiptItems({ month });
+      } catch (itemErr) {
+        console.error('⚠️  Gagal mengambil detail item struk:', itemErr.message);
+      }
+
+      const filepath = await exportToExcel(txs, month, receiptItems);
       const filename = `Keuangan_${month}.xlsx`;
 
       // Kirim file Excel
-      bot.sendDocument(chatId, filepath, {
-        caption: `✅ Laporan Keuangan ${month}\n📋 Total: ${txs.length} transaksi`
-      });
+      await bot.sendDocument(chatId, filepath, {
+        caption: `✅ Laporan Keuangan ${month}\n📋 Total: ${txs.length} transaksi\n🧾 Detail item: ${receiptItems.length}`
+      }, { filename });
+
+      fs.unlink(filepath, () => {});
     } catch (err) {
       console.error('❌ Error export:', err.message);
       bot.sendMessage(chatId, `❌ Gagal membuat Excel: ${err.message}`);
@@ -226,6 +290,11 @@ function initTelegramBot(token) {
       delete pendingReset[chatId];
       try {
         await clearAllTransactions();
+        try {
+          await clearAllReceiptItems();
+        } catch (itemErr) {
+          console.error('⚠️  Gagal menghapus detail item struk:', itemErr.message);
+        }
         transactionHistory.length = 0;
         bot.sendMessage(chatId, '✅ *Semua data berhasil dihapus!*\n\nGoogle Sheet sekarang kosong. Anda bisa mulai mencatat dari awal.', { parse_mode: 'Markdown' });
       } catch (err) {
@@ -384,6 +453,20 @@ function initTelegramBot(token) {
         await appendTransaction(tx);
         transactionHistory.push(tx);
 
+        const receiptId = `receipt_${Date.now()}_${chatId}`;
+        const receiptItems = normalizeReceiptItems(receiptDetails, tx, receiptId);
+        let itemSaveMessage = 'Detail item tidak terdeteksi.';
+
+        if (receiptItems.length) {
+          try {
+            await appendReceiptItems(receiptItems);
+            itemSaveMessage = `${receiptItems.length} detail item tersimpan.`;
+          } catch (itemErr) {
+            console.error('⚠️  Gagal menyimpan detail item struk:', itemErr.message);
+            itemSaveMessage = 'Transaksi tersimpan, tapi detail item gagal tersimpan.';
+          }
+        }
+
         const typeEmoji = tx.type === 'pemasukan' ? '📥' : '📤';
         const summaryMsg = `📸 *Struk Berhasil Dibaca!*\n\n` +
           `🏪 Toko/Sumber: ${receiptDetails.store_name}\n` +
@@ -391,7 +474,8 @@ function initTelegramBot(token) {
           `💳 Metode: ${receiptDetails.payment_method}\n` +
           `${typeEmoji} Tipe: ${tx.type.toUpperCase()}\n` +
           `💵 Total: ${tx.formattedAmount}\n` +
-          `🏷️ Kategori: ${tx.category}\n\n` +
+          `🏷️ Kategori: ${tx.category}\n` +
+          `🧾 Item: ${itemSaveMessage}\n\n` +
           `✅ Transaksi tersimpan di Google Sheet!`;
 
         bot.sendMessage(chatId, summaryMsg, { parse_mode: 'Markdown' });
