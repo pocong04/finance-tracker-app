@@ -3,67 +3,76 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>💰 Catatan Keuangan Pocong</title>
+  <title>💰 Dashboard Catatan Keuangan</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>💰 Catatan Keuangan</h1>
-    <div class="month-picker">
-      <label for="month">Bulan:</label>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">Finance Tracker</p>
+      <h1>💰 Dashboard Catatan Keuangan</h1>
+      <p class="subtitle">Pantau cashflow, budget, struk, toko, dan item belanja dalam satu halaman.</p>
+    </div>
+    <div class="header-actions">
+      <label for="month">Bulan</label>
       <input type="month" id="month" />
+      <button id="refreshBtn" type="button">Refresh</button>
+      <small id="lastUpdated">Belum dimuat</small>
     </div>
   </header>
 
   <main>
-    <!-- Kartu ringkasan -->
-    <section class="cards">
-      <div class="card income">
-        <div class="card-label">📥 Pemasukan</div>
-        <div class="card-value" id="income">Rp 0</div>
-      </div>
-      <div class="card expense">
-        <div class="card-label">📤 Pengeluaran</div>
-        <div class="card-value" id="expense">Rp 0</div>
-      </div>
-      <div class="card balance">
-        <div class="card-label">💰 Saldo</div>
-        <div class="card-value" id="balance">Rp 0</div>
-      </div>
-      <div class="card budget">
-        <div class="card-label">🎯 Sisa Budget</div>
-        <div class="card-value" id="budget">Rp 0</div>
-      </div>
+    <div id="errorBanner" class="error-banner hidden"></div>
+
+    <section class="summary-grid">
+      <div class="metric-card income"><span>Pemasukan</span><strong id="income">Rp 0</strong><small>Bulan terpilih</small></div>
+      <div class="metric-card expense"><span>Pengeluaran</span><strong id="expense">Rp 0</strong><small>Bulan terpilih</small></div>
+      <div class="metric-card balance"><span>Saldo</span><strong id="balance">Rp 0</strong><small>Pemasukan - pengeluaran</small></div>
+      <div class="metric-card budget"><span>Sisa Budget</span><strong id="budget">Rp 0</strong><small id="budgetPercent">0% terpakai</small></div>
+      <div class="metric-card"><span>Total Transaksi</span><strong id="totalTransactions">0</strong><small>Catatan bulan ini</small></div>
+      <div class="metric-card"><span>Rata-rata Harian</span><strong id="dailyAverage">Rp 0</strong><small>Pengeluaran per hari</small></div>
     </section>
 
-    <!-- Grafik -->
-    <section class="charts">
-      <div class="chart-box">
-        <h3>Pengeluaran per Kategori</h3>
-        <canvas id="categoryChart"></canvas>
+    <section class="insight-grid">
+      <div class="insight-card wide">
+        <div class="section-title"><h3>🎯 Progress Budget</h3><span id="budgetStatus">-</span></div>
+        <div class="progress"><div id="budgetProgress" class="progress-bar"></div></div>
       </div>
-      <div class="chart-box">
-        <h3>Tren Pemasukan vs Pengeluaran</h3>
-        <canvas id="trendChart"></canvas>
-      </div>
+      <div class="insight-card"><span>Kategori Terbesar</span><strong id="biggestCategory">-</strong><small id="biggestCategoryValue">Rp 0</small></div>
+      <div class="insight-card"><span>Toko Terbesar</span><strong id="biggestStore">-</strong><small id="biggestStoreValue">Rp 0</small></div>
+      <div class="insight-card"><span>Item Terbesar</span><strong id="biggestItem">-</strong><small id="biggestItemValue">Rp 0</small></div>
     </section>
 
-    <!-- Tabel transaksi -->
-    <section class="table-box">
-      <h3>Riwayat Transaksi</h3>
-      <table id="txTable">
-        <thead>
-          <tr>
-            <th>Tanggal</th>
-            <th>Tipe</th>
-            <th>Kategori</th>
-            <th>Jumlah</th>
-            <th>Catatan</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+    <section class="dashboard-grid">
+      <div class="chart-card"><h3>Pengeluaran per Kategori</h3><canvas id="categoryChart"></canvas></div>
+      <div class="chart-card"><h3>Tren Bulanan</h3><canvas id="trendChart"></canvas></div>
+      <div class="chart-card"><h3>Pengeluaran Harian</h3><canvas id="dailyExpenseChart"></canvas></div>
+      <div class="chart-card"><h3>Top Kategori</h3><canvas id="topCategoryChart"></canvas></div>
+      <div class="chart-card"><h3>Top Toko / Merchant</h3><canvas id="storeChart"></canvas></div>
+      <div class="chart-card"><h3>Metode Pembayaran</h3><canvas id="paymentMethodChart"></canvas></div>
+      <div class="chart-card wide"><h3>Top Item Struk</h3><canvas id="topItemsChart"></canvas></div>
+    </section>
+
+    <section class="tables-grid">
+      <div class="table-card">
+        <div class="section-title"><h3>Riwayat Transaksi Terbaru</h3><span id="txCount">0 transaksi</span></div>
+        <div class="table-wrapper">
+          <table id="txTable">
+            <thead><tr><th>Tanggal</th><th>Tipe</th><th>Kategori</th><th>Jumlah</th><th>Catatan</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="section-title"><h3>Detail Item Struk Terbaru</h3><span id="itemCount">0 item</span></div>
+        <div class="table-wrapper">
+          <table id="itemTable">
+            <thead><tr><th>Tanggal</th><th>Toko</th><th>Item</th><th>Qty</th><th>Total</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </section>
   </main>
 
