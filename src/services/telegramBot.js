@@ -16,6 +16,7 @@ const {
   getReceiptItems,
   clearAllReceiptItems,
   deleteReceiptItemsByTransactionTimestamp,
+  setupGoogleSheetsFormatting,
 } = require('./googleSheets');
 const { extractTextFromImage } = require('./ocr');
 const { parseReceiptDetails } = require('./receiptParser');
@@ -133,6 +134,29 @@ function initTelegramBot(token) {
     if (!isAllowed(chatId)) return;
     const url = process.env.DASHBOARD_URL || 'http://localhost:3000';
     bot.sendMessage(chatId, `🌐 *Dashboard Keuangan*\n\n[Klik untuk buka dashboard](${url})`, { parse_mode: 'Markdown' });
+  });
+
+  // Handler: /setup_sheets (rapikan tampilan Google Spreadsheet)
+  bot.onText(/\/setup_sheets/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (!isAllowed(chatId)) return;
+
+    bot.sendMessage(chatId, '🎨 Sedang merapikan tampilan Google Spreadsheet...');
+
+    try {
+      await setupGoogleSheetsFormatting();
+      bot.sendMessage(chatId,
+        '✅ *Google Spreadsheet berhasil dirapikan!*\n\n' +
+        'Yang diperbarui:\n' +
+        '• Header, filter, freeze row\n' +
+        '• Format Rupiah\n' +
+        '• Warna pemasukan/pengeluaran\n' +
+        '• Tab Dashboard native Google Sheets',
+        { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ Error setup sheets:', err.message);
+      bot.sendMessage(chatId, `❌ Gagal merapikan spreadsheet: ${err.message}`);
+    }
   });
 
   // Handler: /start
