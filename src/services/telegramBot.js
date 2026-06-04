@@ -12,6 +12,8 @@ const { extractTextFromImage } = require('./ocr');
 const { parseReceiptDetails } = require('./receiptParser');
 const { exportToExcel } = require('./excelExporter');
 const { parseReceiptWithAI, suggestCategory } = require('./aiReceiptParser');
+const { showMainMenu, handleCallbackQuery } = require('./menuHandler');
+const { COMMANDS } = require('../config/commands');
 
 // Cek apakah AI parsing tersedia (perlu ANTHROPIC_API_KEY)
 const AI_ENABLED = !!process.env.ANTHROPIC_API_KEY;
@@ -45,6 +47,11 @@ function initTelegramBot(token) {
 
   const bot = new TelegramBot(token, { polling: true });
 
+  // Register commands ke Telegram (muncul saat ketik / di chat)
+  bot.setMyCommands(COMMANDS)
+    .then(() => console.log('✅ Menu commands terdaftar di Telegram'))
+    .catch(err => console.error('⚠️  Gagal daftar commands:', err.message));
+
   // Daftar ID yang diizinkan (jika dikonfigurasi)
   const allowedIds = process.env.TELEGRAM_ALLOWED_IDS
     ? process.env.TELEGRAM_ALLOWED_IDS.split(',').map(s => s.trim())
@@ -55,6 +62,28 @@ function initTelegramBot(token) {
     return allowedIds.includes(String(chatId));
   }
 
+  // Handler: callback queries (klik tombol menu)
+  bot.on('callback_query', (callbackQuery) => {
+    const chatId = callbackQuery.message.chat.id;
+    if (!isAllowed(chatId)) return;
+    handleCallbackQuery(callbackQuery, bot);
+  });
+
+  // Handler: /menu (tampilkan menu interaktif dengan tombol)
+  bot.onText(/\/menu/, (msg) => {
+    const chatId = msg.chat.id;
+    if (!isAllowed(chatId)) return;
+    showMainMenu(chatId, bot);
+  });
+
+  // Handler: /dashboard
+  bot.onText(/\/dashboard/, (msg) => {
+    const chatId = msg.chat.id;
+    if (!isAllowed(chatId)) return;
+    const url = process.env.DASHBOARD_URL || 'http://localhost:3000';
+    bot.sendMessage(chatId, `🌐 *Dashboard Keuangan*\n\n[Klik untuk buka dashboard](${url})`, { parse_mode: 'Markdown' });
+  });
+
   // Handler: /start
   bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
@@ -62,7 +91,9 @@ function initTelegramBot(token) {
       bot.sendMessage(chatId, '❌ Anda tidak memiliki akses ke bot ini.');
       return;
     }
-    bot.sendMessage(chatId, helpMessage(), { parse_mode: 'Markdown' });
+    // Tampilkan sambutan + menu tombol interaktif
+    bot.sendMessage(chatId, helpMessage(), { parse_mode: 'Markdown' })
+      .then(() => showMainMenu(chatId, bot));
   });
 
   // Handler: /help
