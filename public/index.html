@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>💰 Catatan Keuangan Pocong</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>💰 Catatan Keuangan</h1>
+    <div class="month-picker">
+      <label for="month">Bulan:</label>
+      <input type="month" id="month" />
+    </div>
+  </header>
+
+  <main>
+    <!-- Kartu ringkasan -->
+    <section class="cards">
+      <div class="card income">
+        <div class="card-label">📥 Pemasukan</div>
+        <div class="card-value" id="income">Rp 0</div>
+      </div>
+      <div class="card expense">
+        <div class="card-label">📤 Pengeluaran</div>
+        <div class="card-value" id="expense">Rp 0</div>
+      </div>
+      <div class="card balance">
+        <div class="card-label">💰 Saldo</div>
+        <div class="card-value" id="balance">Rp 0</div>
+      </div>
+      <div class="card budget">
+        <div class="card-label">🎯 Sisa Budget</div>
+        <div class="card-value" id="budget">Rp 0</div>
+      </div>
+    </section>
+
+    <!-- Grafik -->
+    <section class="charts">
+      <div class="chart-box">
+        <h3>Pengeluaran per Kategori</h3>
+        <canvas id="categoryChart"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3>Tren Pemasukan vs Pengeluaran</h3>
+        <canvas id="trendChart"></canvas>
+      </div>
+    </section>
+
+    <!-- Tabel transaksi -->
+    <section class="table-box">
+      <h3>Riwayat Transaksi</h3>
+      <table id="txTable">
+        <thead>
+          <tr>
+            <th>Tanggal</th>
+            <th>Tipe</th>
+            <th>Kategori</th>
+            <th>Jumlah</th>
+            <th>Catatan</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

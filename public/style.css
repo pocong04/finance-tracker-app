@@ -1,0 +1,115 @@
+/* public/style.css - Catatan Keuangan Pocong */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Segoe UI', Tahoma, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a2e;
+  line-height: 1.5;
+}
+
+header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  padding: 1.5rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+header h1 { font-size: 1.6rem; }
+
+.month-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.month-picker input {
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.2rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-left: 5px solid #ccc;
+}
+
+.card-label { font-size: 0.9rem; color: #666; margin-bottom: 0.4rem; }
+.card-value { font-size: 1.5rem; font-weight: 700; }
+
+.card.income { border-left-color: #2ecc71; }
+.card.expense { border-left-color: #e74c3c; }
+.card.balance { border-left-color: #3498db; }
+.card.budget { border-left-color: #f39c12; }
+
+.charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-box {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.2rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.chart-box h3 { font-size: 1rem; margin-bottom: 1rem; color: #444; }
+
+.table-box {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.2rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.table-box h3 { font-size: 1rem; margin-bottom: 1rem; color: #444; }
+
+table { width: 100%; border-collapse: collapse; }
+
+th, td {
+  text-align: left;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid #eee;
+  font-size: 0.9rem;
+}
+
+th { color: #888; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+
+.tag {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.tag.pemasukan { background: #d5f5e3; color: #1e8449; }
+.tag.pengeluaran { background: #fadbd8; color: #c0392b; }
+
+@media (max-width: 768px) {
+  .charts { grid-template-columns: 1fr; }
+}
