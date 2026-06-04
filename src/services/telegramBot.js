@@ -11,6 +11,10 @@ const { appendTransaction, getTransactions, clearAllTransactions, deleteLastTran
 const { extractTextFromImage } = require('./ocr');
 const { parseReceiptDetails } = require('./receiptParser');
 const { exportToExcel } = require('./excelExporter');
+const { parseReceiptWithAI, suggestCategory } = require('./aiReceiptParser');
+
+// Cek apakah AI parsing tersedia (perlu ANTHROPIC_API_KEY)
+const AI_ENABLED = !!process.env.ANTHROPIC_API_KEY;
 
 let transactionHistory = [];
 
@@ -278,7 +282,25 @@ function initTelegramBot(token) {
 
       // OCR: baca teks dari gambar
       const text = await extractTextFromImage(localPath);
-      const receiptDetails = parseReceiptDetails(text);  // Parse detail struk
+
+      // Parse dengan dua cara: biasa dan AI (jika AI enabled)
+      let receiptDetails = parseReceiptDetails(text);
+
+      // Jika parsing biasa tidak ketemu total, coba pakai AI parser
+      if (receiptDetails.total === 0 && AI_ENABLED) {
+        try {
+          bot.sendMessage(chatId, '🤖 Menggunakan AI untuk parsing yang lebih akurat...');
+          receiptDetails = await parseReceiptWithAI(text);
+
+          // Suggest kategori dengan AI
+          if (receiptDetails.items.length > 0) {
+            receiptDetails.suggested_category = await suggestCategory(receiptDetails.items);
+          }
+        } catch (aiErr) {
+          console.error('⚠️  AI parsing fallback error:', aiErr.message);
+          // Lanjut dengan parsing biasa jika AI gagal
+        }
+      }
 
       // Hapus file sementara
       fs.unlink(localPath, () => {});

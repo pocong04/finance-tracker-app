@@ -13,6 +13,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",

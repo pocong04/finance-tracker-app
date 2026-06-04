@@ -12,7 +12,6 @@ const CATEGORIES = [
 const INCOME_CATEGORIES = ['gaji', 'freelance', 'investasi'];
 
 // Kamus kata kunci → kategori. Membantu bot mengerti bahasa sehari-hari.
-// Contoh: "makan", "kopi", "bensin", "billiard", dll otomatis terdeteksi kategorinya.
 const KEYWORD_MAP = {
   makanan: ['makan', 'makanan', 'nasi', 'ayam', 'bakso', 'mie', 'soto', 'sate', 'gorengan', 'sarapan', 'lunch', 'dinner', 'jajan', 'snack', 'roti', 'kfc', 'mcd', 'warteg', 'padang', 'seblak', 'pizza', 'burger'],
   minuman: ['minum', 'minuman', 'kopi', 'coffee', 'teh', 'jus', 'soda', 'air', 'boba', 'es', 'starbucks', 'milkshake'],
@@ -27,6 +26,11 @@ const KEYWORD_MAP = {
   investasi: ['investasi', 'saham', 'reksadana', 'crypto', 'dividen', 'bunga', 'profit', 'emas'],
   tabungan: ['tabungan', 'nabung', 'menabung', 'simpanan'],
 };
+
+// Keywords untuk deteksi PEMASUKAN vs PENGELUARAN
+const INCOME_KEYWORDS = ['pemasukan', 'masuk', 'dapat', 'terima', 'dapat dari', 'pendapatan', '+'];
+const EXPENSE_KEYWORDS = ['pengeluaran', 'keluar', 'bayar', 'beli', 'habis', 'biaya', 'bayaran', '-'];
+
 
 /**
  * Deteksi kategori dari sebuah teks berdasarkan kata kunci.
@@ -111,6 +115,15 @@ function parseTransactionSmart(text) {
 
   if (isNaN(foundAmount) || foundAmount <= 0) {
     return { error: '❌ Jumlah tidak valid!' };
+  }
+
+  // Deteksi TYPE (pemasukan vs pengeluaran) dari keywords dalam kalimat
+  // (variable `type` sudah dideklarasi di atas, di sini kita override jika ada keyword)
+  for (const kw of INCOME_KEYWORDS) {
+    if (text.includes(kw)) {
+      type = 'pemasukan';
+      break;
+    }
   }
 
   // Deteksi kategori dari text menggunakan kamus kata kunci
