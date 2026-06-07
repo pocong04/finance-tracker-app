@@ -132,8 +132,19 @@ function initTelegramBot(token) {
   bot.onText(/\/dashboard/, (msg) => {
     const chatId = msg.chat.id;
     if (!isAllowed(chatId)) return;
-    const url = process.env.DASHBOARD_URL || 'http://localhost:3000';
-    bot.sendMessage(chatId, `🌐 *Dashboard Keuangan*\n\n[Klik untuk buka dashboard](${url})`, { parse_mode: 'Markdown' });
+    const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+    const url = process.env.DASHBOARD_URL || (railwayDomain ? `https://${railwayDomain}` : 'http://localhost:3000');
+    bot.sendMessage(chatId,
+      `🌐 *Dashboard Keuangan*\n\n` +
+      `Link dashboard Anda:\n${url}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🌐 Buka Dashboard', url }
+          ]]
+        }
+      });
   });
 
   // Handler: /setup_sheets (rapikan tampilan Google Spreadsheet)

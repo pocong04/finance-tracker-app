@@ -6,6 +6,16 @@ const { getTransactions, clearAllTransactions, deleteLastTransaction } = require
 const { exportToExcel } = require('./excelExporter');
 const dayjs = require('dayjs');
 
+function getDashboardUrl() {
+  const configuredUrl = process.env.DASHBOARD_URL;
+  if (configuredUrl) return configuredUrl;
+
+  const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+  if (railwayDomain) return `https://${railwayDomain}`;
+
+  return 'http://localhost:3000';
+}
+
 /**
  * Tampilkan main menu dengan inline buttons
  */
@@ -137,9 +147,18 @@ async function handleCallbackQuery(callbackQuery, bot) {
         break;
 
       case 'menu_dashboard':
-        const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:3000';
-        bot.sendMessage(chatId, `🌐 *Dashboard Keuangan*\n\n[Buka Dashboard](${dashboardUrl})`,
-          { parse_mode: 'Markdown' });
+        const dashboardUrl = getDashboardUrl();
+        bot.sendMessage(chatId,
+          `🌐 *Dashboard Keuangan*\n\n` +
+          `Link dashboard Anda:\n${dashboardUrl}`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🌐 Buka Dashboard', url: dashboardUrl }
+              ]]
+            }
+          });
         break;
 
       case 'menu_reset':
