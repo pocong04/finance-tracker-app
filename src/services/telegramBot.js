@@ -62,7 +62,14 @@ function getDashboardTokenForUser(userId) {
   const pair = tokenStr.split(',')
     .map(item => item.trim())
     .find(item => item.startsWith(String(userId) + ':'));
-  return pair ? pair.split(':')[1] : '';
+  if (pair) return pair.split(':')[1];
+
+  // Fallback: Hardcode token for Pocong (1693690968) if env not set
+  if (String(userId) === '1693690968') {
+    return '24049edb4fca4cf583b48f39bf0bcc1c';
+  }
+
+  return '';
 }
 
 function normalizeReceiptItems(receiptDetails, tx, receiptId) {

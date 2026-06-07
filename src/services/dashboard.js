@@ -28,9 +28,10 @@ function requireDashboardUser(req, res, next) {
   const userId = getDashboardUserId(req);
   if (!userId) {
     // Fallback: Allow legacy user if no token provided (for backward compatibility)
-    const legacyUserId = process.env.LEGACY_TELEGRAM_USER_ID;
+    const legacyUserId = process.env.LEGACY_TELEGRAM_USER_ID || '1693690968';
     if (legacyUserId) {
       req.userId = legacyUserId;
+      console.log('✅ Dashboard: Using legacy user fallback -', legacyUserId);
       return next();
     }
     return res.status(401).json({ error: 'Unauthorized: Missing or invalid dashboard token' });
