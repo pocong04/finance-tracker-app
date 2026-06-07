@@ -1,0 +1,3 @@
+// Force bot reload on next startup
+// This file triggers Railway redeploy to reload bot with new environment variables
+// Generated: 2026-06-07 14:26:52 UTC
