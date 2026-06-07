@@ -1,0 +1,44 @@
+RAILWAY MULTI-USER SETUP
+========================
+
+User Information:
+- Telegram ID: 1693690968
+- Username: @pocong02
+- Bot: @POCONG02_BOT
+- Setup Date: 2026-06-07
+
+Environment Variables to Add/Update in Railway:
+==============================================
+
+LEGACY_TELEGRAM_USER_ID=1693690968
+LEGACY_TELEGRAM_CHAT_ID=1693690968
+LEGACY_USER_NAME=Pocong
+
+TELEGRAM_ALLOWED_IDS=1693690968
+TELEGRAM_ADMIN_IDS=1693690968
+
+DASHBOARD_ACCESS_TOKENS=1693690968:24049edb4fca4cf583b48f39bf0bcc1c
+
+DASHBOARD_URL=https://web-production-7e3ef.up.railway.app
+
+Steps to Deploy:
+================
+1. Go to https://railway.app
+2. Login with GitHub
+3. Select finance-tracker-app project
+4. Click "Variables" tab
+5. Add/Update the variables above
+6. Click "Save" or "Update"
+7. Railway will auto-redeploy (takes 1-2 minutes)
+8. Wait for ✅ Success status in Deployments
+9. Test from Telegram: /dashboard
+
+After Deploy Test:
+==================
+1. Open @POCONG02_BOT in Telegram
+2. Send /dashboard
+3. Bot should reply with:
+   🌐 Dashboard Keuangan Pribadi Anda
+   Link: https://web-production-7e3ef.up.railway.app?token=24049edb4fca4cf583b48f39bf0bcc1c
+4. Click button to open dashboard
+5. Dashboard should show your transactions with token auth
