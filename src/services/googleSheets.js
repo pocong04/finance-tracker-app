@@ -20,6 +20,9 @@ const TRANSACTION_HEADERS = [
   'category',
   'note',
   'formatted_amount',
+  'user_id',
+  'user_name',
+  'chat_id',
 ];
 
 const RECEIPT_ITEM_HEADERS = [
@@ -38,6 +41,9 @@ const RECEIPT_ITEM_HEADERS = [
   'transaction_type',
   'raw_note',
   'created_at',
+  'user_id',
+  'user_name',
+  'chat_id',
 ];
 
 const COLORS = {
@@ -90,6 +96,28 @@ function columnLetter(index) {
   return letter;
 }
 
+// ====== NEW: Multi-user helper functions ======
+function getLegacyUserId() {
+  return process.env.LEGACY_TELEGRAM_USER_ID || '';
+}
+
+function belongsToUser(row, userId) {
+  if (!userId) return false;
+  // If row has user_id (new data), check if it matches
+  if (row.userId) return row.userId === String(userId);
+  // If row has no user_id (legacy data), check if user is legacy owner
+  return String(userId) === getLegacyUserId();
+}
+
+function normalizeUserContext(userContext) {
+  if (!userContext) return null;
+  return {
+    userId: String(userContext.userId || userContext.chatId || ''),
+    chatId: String(userContext.chatId || ''),
+    userName: userContext.userName || '',
+  };
+}
+
 async function getSpreadsheetMetadata(sheets, spreadsheetId) {
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
   return spreadsheet.data;
@@ -124,7 +152,7 @@ async function ensureSheetExists(title, headers = []) {
     }).catch(() => ({ data: { values: [] } }));
 
     const firstRow = resp.data.values && resp.data.values[0] ? resp.data.values[0] : [];
-    if (!firstRow.length) {
+    if (!firstRow.length || firstRow.length < headers.length) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `${title}!A1:${endColumn}1`,
@@ -331,12 +359,14 @@ async function setupGoogleSheetsFormatting() {
   await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
 }
 
-async function appendTransaction(tx) {
+async function appendTransaction(tx, userContext) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
 
   await ensureSheetExists(TRANSACTIONS_SHEET, TRANSACTION_HEADERS);
   const sheets = await getSheets();
+
+  const ctx = normalizeUserContext(userContext);
   const values = [
     tx.timestamp,
     tx.date,
@@ -346,11 +376,14 @@ async function appendTransaction(tx) {
     tx.category,
     tx.note,
     tx.formattedAmount,
+    ctx ? ctx.userId : '',
+    ctx ? ctx.userName : '',
+    ctx ? ctx.chatId : '',
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A:H`,
+    range: `${TRANSACTIONS_SHEET}!A:K`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [values] },
@@ -365,7 +398,7 @@ async function getTransactions(opts = {}) {
   const sheets = await getSheets();
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A:H`,
+    range: `${TRANSACTIONS_SHEET}!A:K`,
   });
 
   const rows = resp.data.values || [];
@@ -382,13 +415,24 @@ async function getTransactions(opts = {}) {
     category: r[5],
     note: r[6],
     formattedAmount: r[7],
+    userId: r[8],
+    userName: r[9],
+    chatId: r[10],
   }));
 
-  if (opts.month) return result.filter(t => t.month === opts.month);
-  return result;
+  // Filter by month if specified
+  let filtered = result;
+  if (opts.month) filtered = filtered.filter(t => t.month === opts.month);
+
+  // Filter by userId if specified
+  if (opts.userId) {
+    filtered = filtered.filter(t => belongsToUser(t, opts.userId));
+  }
+
+  return filtered;
 }
 
-async function appendReceiptItems(receiptItems) {
+async function appendReceiptItems(receiptItems, userContext) {
   if (!Array.isArray(receiptItems) || !receiptItems.length) return;
 
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -396,6 +440,8 @@ async function appendReceiptItems(receiptItems) {
 
   await ensureSheetExists(RECEIPT_ITEMS_SHEET, RECEIPT_ITEM_HEADERS);
   const sheets = await getSheets();
+
+  const ctx = normalizeUserContext(userContext);
   const values = receiptItems.map(item => [
     item.receipt_id,
     item.transaction_timestamp,
@@ -412,11 +458,14 @@ async function appendReceiptItems(receiptItems) {
     item.transaction_type,
     item.raw_note,
     item.created_at,
+    ctx ? ctx.userId : '',
+    ctx ? ctx.userName : '',
+    ctx ? ctx.chatId : '',
   ]);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+    range: `${RECEIPT_ITEMS_SHEET}!A:R`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values },
@@ -431,7 +480,7 @@ async function getReceiptItems(opts = {}) {
   const sheets = await getSheets();
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+    range: `${RECEIPT_ITEMS_SHEET}!A:R`,
   });
 
   const rows = resp.data.values || [];
@@ -455,53 +504,110 @@ async function getReceiptItems(opts = {}) {
     transaction_type: r[12],
     raw_note: r[13],
     created_at: r[14],
+    userId: r[15],
+    userName: r[16],
+    chatId: r[17],
   }));
 
   if (opts.month) result = result.filter(item => item.month === opts.month);
   if (opts.receiptId) result = result.filter(item => item.receipt_id === opts.receiptId);
   if (opts.transactionTimestamp) result = result.filter(item => item.transaction_timestamp === opts.transactionTimestamp);
+  if (opts.userId) result = result.filter(item => belongsToUser(item, opts.userId));
+
   return result;
 }
 
-async function clearAllTransactions() {
+async function deleteSheetRows(sheetTitle, rowNumbers) {
+  if (!Array.isArray(rowNumbers) || !rowNumbers.length) return;
+
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  const sheets = await getSheets();
+  const metadata = await getSpreadsheetMetadata(sheets, spreadsheetId);
+  const sheet = getSheetByTitle(metadata, sheetTitle);
+  if (!sheet) return;
+
+  const requests = rowNumbers
+    .slice()
+    .sort((a, b) => b - a)
+    .map(rowNumber => ({
+      deleteDimension: {
+        range: {
+          sheetId: sheet.properties.sheetId,
+          dimension: 'ROWS',
+          startIndex: rowNumber - 1,
+          endIndex: rowNumber,
+        },
+      },
+    }));
+
+  await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+}
+
+async function clearAllTransactions(opts = {}) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
 
   await ensureSheetExists(TRANSACTIONS_SHEET, TRANSACTION_HEADERS);
-  const sheets = await getSheets();
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A:H`,
-  });
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A1:H1`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [TRANSACTION_HEADERS] },
-  });
+  if (!opts.userId && !opts.allUsers) {
+    throw new Error('clearAllTransactions requires userId or allUsers=true');
+  }
+
+  if (opts.allUsers) {
+    const sheets = await getSheets();
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${TRANSACTIONS_SHEET}!A:K` });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${TRANSACTIONS_SHEET}!A1:K1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [TRANSACTION_HEADERS] },
+    });
+    return;
+  }
+
+  const rows = await getTransactionRowsWithNumbers();
+  const rowNumbers = rows.filter(row => belongsToUser(row, opts.userId)).map(row => row.rowNumber);
+  await deleteSheetRows(TRANSACTIONS_SHEET, rowNumbers);
 }
 
-async function clearAllReceiptItems() {
+async function clearAllReceiptItems(opts = {}) {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
 
   await ensureSheetExists(RECEIPT_ITEMS_SHEET, RECEIPT_ITEM_HEADERS);
-  const sheets = await getSheets();
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId,
-    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
-  });
 
+  if (!opts.userId && !opts.allUsers) {
+    throw new Error('clearAllReceiptItems requires userId or allUsers=true');
+  }
+
+  if (opts.allUsers) {
+    const sheets = await getSheets();
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${RECEIPT_ITEMS_SHEET}!A:R` });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${RECEIPT_ITEMS_SHEET}!A1:R1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [RECEIPT_ITEM_HEADERS] },
+    });
+    return;
+  }
+
+  const items = await getReceiptItems({});
+  const remaining = items.filter(item => !belongsToUser(item, opts.userId));
+  const sheets = await getSheets();
+
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${RECEIPT_ITEMS_SHEET}!A:R` });
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${RECEIPT_ITEMS_SHEET}!A1:O1`,
+    range: `${RECEIPT_ITEMS_SHEET}!A1:R1`,
     valueInputOption: 'RAW',
     requestBody: { values: [RECEIPT_ITEM_HEADERS] },
   });
+
+  if (remaining.length) await appendReceiptItems(remaining);
 }
 
-async function deleteLastTransaction() {
+async function getTransactionRowsWithNumbers() {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
 
@@ -509,51 +615,77 @@ async function deleteLastTransaction() {
   const sheets = await getSheets();
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A:H`,
+    range: `${TRANSACTIONS_SHEET}!A:K`,
   });
-  const rows = resp.data.values ? resp.data.values.length : 0;
-  if (rows <= 1) return;
 
-  const metadata = await getSpreadsheetMetadata(sheets, spreadsheetId);
-  const sheet = getSheetByTitle(metadata, TRANSACTIONS_SHEET);
-  const numericSheetId = sheet ? sheet.properties.sheetId : 0;
-  const rowIndex = rows - 1;
+  const rows = resp.data.values || [];
+  const dataRows = rows[0] && rows[0][0] && rows[0][0].toLowerCase().includes('timestamp')
+    ? rows.slice(1)
+    : rows;
 
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [{
-        deleteDimension: {
-          range: {
-            sheetId: numericSheetId,
-            dimension: 'ROWS',
-            startIndex: rowIndex,
-            endIndex: rowIndex + 1,
-          },
-        },
-      }],
-    },
-  });
+  return dataRows.map((r, idx) => ({
+    rowNumber: idx + 2,
+    timestamp: r[0],
+    date: r[1],
+    month: r[2],
+    type: r[3],
+    amount: Number(r[4]),
+    category: r[5],
+    note: r[6],
+    formattedAmount: r[7],
+    userId: r[8],
+    userName: r[9],
+    chatId: r[10],
+  }));
 }
 
-async function deleteReceiptItemsByTransactionTimestamp(timestamp) {
+async function deleteLastTransaction(opts = {}) {
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
+
+  if (!opts.userId) throw new Error('deleteLastTransaction requires userId');
+
+  const rows = await getTransactionRowsWithNumbers();
+  const userRows = rows.filter(row => belongsToUser(row, opts.userId));
+
+  if (!userRows.length) return null;
+
+  const lastRow = userRows[userRows.length - 1];
+  await deleteSheetRows(TRANSACTIONS_SHEET, [lastRow.rowNumber]);
+
+  return {
+    timestamp: lastRow.timestamp,
+    date: lastRow.date,
+    month: lastRow.month,
+    type: lastRow.type,
+    amount: lastRow.amount,
+    category: lastRow.category,
+    note: lastRow.note,
+    formattedAmount: lastRow.formattedAmount,
+  };
+}
+
+async function deleteReceiptItemsByTransactionTimestamp(timestamp, opts = {}) {
   if (!timestamp) return;
 
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEET_ID in .env');
 
   const items = await getReceiptItems({});
-  const remaining = items.filter(item => item.transaction_timestamp !== timestamp);
-  const sheets = await getSheets();
+  const remaining = items.filter(item =>
+    item.transaction_timestamp !== timestamp ||
+    (opts.userId && !belongsToUser(item, opts.userId))
+  );
 
+  const sheets = await getSheets();
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${RECEIPT_ITEMS_SHEET}!A:O`,
+    range: `${RECEIPT_ITEMS_SHEET}!A:R`,
   });
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${RECEIPT_ITEMS_SHEET}!A1:O1`,
+    range: `${RECEIPT_ITEMS_SHEET}!A1:R1`,
     valueInputOption: 'RAW',
     requestBody: { values: [RECEIPT_ITEM_HEADERS] },
   });
@@ -571,4 +703,8 @@ module.exports = {
   clearAllReceiptItems,
   deleteReceiptItemsByTransactionTimestamp,
   setupGoogleSheetsFormatting,
+  getTransactionRowsWithNumbers,
+  getLegacyUserId,
+  belongsToUser,
+  normalizeUserContext,
 };

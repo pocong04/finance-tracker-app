@@ -6,6 +6,33 @@ const path = require('path');
 const dayjs = require('dayjs');
 const { getTransactions, getReceiptItems } = require('./googleSheets');
 
+// ====== NEW: Dashboard token auth ======
+function parseDashboardTokens() {
+  const tokenStr = process.env.DASHBOARD_ACCESS_TOKENS || '';
+  const tokenMap = {};
+  tokenStr.split(',').forEach(pair => {
+    const [userId, token] = pair.trim().split(':');
+    if (userId && token) tokenMap[token] = userId;
+  });
+  return tokenMap;
+}
+
+function getDashboardUserId(req) {
+  const token = req.query.token || req.headers['x-dashboard-token'];
+  if (!token) return null;
+  const tokenMap = parseDashboardTokens();
+  return tokenMap[token] || null;
+}
+
+function requireDashboardUser(req, res, next) {
+  const userId = getDashboardUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid dashboard token' });
+  }
+  req.userId = userId;
+  next();
+}
+
 function toAmount(value) {
   return Number(value) || 0;
 }
@@ -123,17 +150,17 @@ function initDashboard(port) {
 
   app.use(express.static(path.join(__dirname, '../../public')));
 
-  app.get('/api/dashboard', async (req, res) => {
+  app.get('/api/dashboard', requireDashboardUser, async (req, res) => {
     try {
       const month = req.query.month || dayjs().format('YYYY-MM');
       const [monthlyTxs, allTxs] = await Promise.all([
-        getTransactions({ month }),
-        getTransactions({}),
+        getTransactions({ month, userId: req.userId }),
+        getTransactions({ userId: req.userId }),
       ]);
 
       let receiptItems = [];
       try {
-        receiptItems = await getReceiptItems({ month });
+        receiptItems = await getReceiptItems({ month, userId: req.userId });
       } catch (itemErr) {
         console.error('⚠️  Error reading receipt items for dashboard:', itemErr.message);
       }
@@ -145,10 +172,10 @@ function initDashboard(port) {
     }
   });
 
-  app.get('/api/transactions', async (req, res) => {
+  app.get('/api/transactions', requireDashboardUser, async (req, res) => {
     try {
       const month = req.query.month;
-      const txs = await getTransactions(month ? { month } : {});
+      const txs = await getTransactions(month ? { month, userId: req.userId } : { userId: req.userId });
       res.json(txs);
     } catch (err) {
       console.error('❌ Error /api/transactions:', err.message);
@@ -156,10 +183,10 @@ function initDashboard(port) {
     }
   });
 
-  app.get('/api/summary', async (req, res) => {
+  app.get('/api/summary', requireDashboardUser, async (req, res) => {
     try {
       const month = req.query.month || dayjs().format('YYYY-MM');
-      const txs = await getTransactions({ month });
+      const txs = await getTransactions({ month, userId: req.userId });
 
       let income = 0, expense = 0;
       const byCategory = {};
@@ -190,9 +217,9 @@ function initDashboard(port) {
     }
   });
 
-  app.get('/api/trend', async (req, res) => {
+  app.get('/api/trend', requireDashboardUser, async (req, res) => {
     try {
-      const txs = await getTransactions({});
+      const txs = await getTransactions({ userId: req.userId });
       const trend = buildMonthlyTrend(txs);
       res.json({ months: trend.months, income: trend.income, expense: trend.expense });
     } catch (err) {

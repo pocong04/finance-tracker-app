@@ -2,7 +2,7 @@
 // Interactive menu system untuk Telegram bot
 // Menangani callback queries dan inline keyboards
 
-const { getTransactions, clearAllTransactions, deleteLastTransaction } = require('./googleSheets');
+const { getTransactions, clearAllTransactions, deleteLastTransaction, getReceiptItems } = require('./googleSheets');
 const { exportToExcel } = require('./excelExporter');
 const dayjs = require('dayjs');
 
@@ -14,6 +14,19 @@ function getDashboardUrl() {
   if (railwayDomain) return `https://${railwayDomain}`;
 
   return 'http://localhost:3000';
+}
+
+// ====== NEW: Get user context from callback query ======
+function getCallbackUserContext(callbackQuery) {
+  const from = callbackQuery.from || {};
+  const chatId = callbackQuery.message.chat.id;
+  return {
+    userId: String(from.id || chatId),
+    chatId: String(chatId),
+    userName: from.username
+      ? `@${from.username}`
+      : [from.first_name, from.last_name].filter(Boolean).join(' ') || String(chatId),
+  };
 }
 
 /**
@@ -99,7 +112,8 @@ async function handleCallbackQuery(callbackQuery, bot) {
         break;
 
       case 'menu_summary':
-        const txs = await getTransactions({ month: dayjs().format('YYYY-MM') });
+        const userContext = getCallbackUserContext(callbackQuery);
+        const txs = await getTransactions({ month: dayjs().format('YYYY-MM'), userId: userContext.userId });
         let income = 0, expense = 0;
         txs.forEach(t => {
           if (t.type === 'pemasukan') income += Number(t.amount);
@@ -125,15 +139,22 @@ async function handleCallbackQuery(callbackQuery, bot) {
         break;
 
       case 'menu_export':
+        const userContextExport = getCallbackUserContext(callbackQuery);
         const month = dayjs().format('YYYY-MM');
         bot.sendMessage(chatId, '📊 Sedang membuat file Excel...');
-        const txsExport = await getTransactions({ month });
+        const txsExport = await getTransactions({ month, userId: userContextExport.userId });
         if (txsExport.length === 0) {
-          bot.sendMessage(chatId, '❌ Tidak ada transaksi bulan ini');
+          bot.sendMessage(chatId, '❌ Tidak ada transaksi Anda bulan ini');
         } else {
-          const filepath = await exportToExcel(txsExport, month);
+          let receiptItemsExport = [];
+          try {
+            receiptItemsExport = await getReceiptItems({ month, userId: userContextExport.userId });
+          } catch (itemErr) {
+            console.error('⚠️  Gagal mengambil detail item struk:', itemErr.message);
+          }
+          const filepath = await exportToExcel(txsExport, month, receiptItemsExport);
           bot.sendDocument(chatId, filepath, {
-            caption: `✅ Laporan ${month}\n📋 ${txsExport.length} transaksi`
+            caption: `✅ Laporan ${month}\n📋 ${txsExport.length} transaksi\n🧾 Detail item: ${receiptItemsExport.length}`
           });
         }
         break;
@@ -147,15 +168,27 @@ async function handleCallbackQuery(callbackQuery, bot) {
         break;
 
       case 'menu_dashboard':
+        const userContextDash = getCallbackUserContext(callbackQuery);
         const dashboardUrl = getDashboardUrl();
+        const dashboardToken = process.env.DASHBOARD_ACCESS_TOKENS
+          ? process.env.DASHBOARD_ACCESS_TOKENS.split(',')
+              .map(pair => pair.trim())
+              .find(pair => pair.startsWith(userContextDash.userId + ':'))
+              ?.split(':')[1]
+          : null;
+
+        const tokenUrl = dashboardToken
+          ? `${dashboardUrl}?token=${encodeURIComponent(dashboardToken)}`
+          : dashboardUrl;
+
         bot.sendMessage(chatId,
-          `🌐 *Dashboard Keuangan*\n\n` +
-          `Link dashboard Anda:\n${dashboardUrl}`,
+          `🌐 *Dashboard Keuangan Anda*\n\n` +
+          `Link dashboard pribadi Anda:\n${tokenUrl}`,
           {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [[
-                { text: '🌐 Buka Dashboard', url: dashboardUrl }
+                { text: '🌐 Buka Dashboard', url: tokenUrl }
               ]]
             }
           });
@@ -164,7 +197,8 @@ async function handleCallbackQuery(callbackQuery, bot) {
       case 'menu_reset':
         bot.sendMessage(chatId,
           `⚠️ *PERINGATAN: Reset Data*\n\n` +
-          `Ini akan menghapus SEMUA transaksi Anda!\n\n` +
+          `Ini akan menghapus SEMUA transaksi milik Anda saja.\n` +
+          `Data pengguna lain tidak akan dihapus.\n\n` +
           `Ketik \`/reset\` untuk lanjutkan`,
           { parse_mode: 'Markdown' });
         break;

@@ -57,6 +57,14 @@ function parseItemAmount(value) {
   return Number(cleaned) || 0;
 }
 
+function getDashboardTokenForUser(userId) {
+  const tokenStr = process.env.DASHBOARD_ACCESS_TOKENS || '';
+  const pair = tokenStr.split(',')
+    .map(item => item.trim())
+    .find(item => item.startsWith(String(userId) + ':'));
+  return pair ? pair.split(':')[1] : '';
+}
+
 function normalizeReceiptItems(receiptDetails, tx, receiptId) {
   const dayjs = require('dayjs');
   const items = Array.isArray(receiptDetails.items) ? receiptDetails.items : [];
@@ -104,7 +112,7 @@ function initTelegramBot(token) {
     .then(() => console.log('✅ Menu commands terdaftar di Telegram'))
     .catch(err => console.error('⚠️  Gagal daftar commands:', err.message));
 
-  // Daftar ID yang diizinkan (jika dikonfigurasi)
+// Daftar ID yang diizinkan (jika dikonfigurasi)
   const allowedIds = process.env.TELEGRAM_ALLOWED_IDS
     ? process.env.TELEGRAM_ALLOWED_IDS.split(',').map(s => s.trim())
     : [];
@@ -112,6 +120,29 @@ function initTelegramBot(token) {
   function isAllowed(chatId) {
     if (!allowedIds.length) return true;
     return allowedIds.includes(String(chatId));
+  }
+
+  // ====== NEW: Multi-user helpers ======
+  function getTelegramUserContext(msg) {
+    const from = msg.from || {};
+    return {
+      userId: String(from.id || msg.chat.id),
+      chatId: String(msg.chat.id),
+      userName: from.username
+        ? `@${from.username}`
+        : [from.first_name, from.last_name].filter(Boolean).join(' ') || String(msg.chat.id),
+    };
+  }
+
+  function isAdmin(userIdOrChatId) {
+    const adminIds = process.env.TELEGRAM_ADMIN_IDS
+      ? process.env.TELEGRAM_ADMIN_IDS.split(',').map(s => s.trim())
+      : [];
+    if (!adminIds.length) {
+      const legacyId = process.env.LEGACY_TELEGRAM_USER_ID;
+      return legacyId && String(userIdOrChatId) === String(legacyId);
+    }
+    return adminIds.includes(String(userIdOrChatId));
   }
 
   // Handler: callback queries (klik tombol menu)
@@ -132,16 +163,26 @@ function initTelegramBot(token) {
   bot.onText(/\/dashboard/, (msg) => {
     const chatId = msg.chat.id;
     if (!isAllowed(chatId)) return;
+    const userContext = getTelegramUserContext(msg);
     const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
-    const url = process.env.DASHBOARD_URL || (railwayDomain ? `https://${railwayDomain}` : 'http://localhost:3000');
-    bot.sendMessage(chatId,
-      `🌐 *Dashboard Keuangan*\n\n` +
-      `Link dashboard Anda:\n${url}`,
+    const baseDashboardUrl = process.env.DASHBOARD_URL || (railwayDomain ? `https://${railwayDomain}` : 'http://localhost:3000');
+
+    const token = getDashboardTokenForUser(userContext.userId);
+    const dashboardUrl = token ? `${baseDashboardUrl}?token=${encodeURIComponent(token)}` : baseDashboardUrl;
+
+    const message = token
+      ? `🌐 *Dashboard Keuangan Pribadi Anda*\n\n` +
+        `Link dashboard Anda:\n${dashboardUrl}`
+      : `🌐 *Dashboard Keuangan*\n\n` +
+        `Link dashboard:\n${dashboardUrl}\n\n` +
+        `⚠️ Token dashboard belum dikonfigurasi. Hubungi admin.`;
+
+    bot.sendMessage(chatId, message,
       {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: '🌐 Buka Dashboard', url }
+            { text: '🌐 Buka Dashboard', url: dashboardUrl }
           ]]
         }
       });
@@ -151,6 +192,12 @@ function initTelegramBot(token) {
   bot.onText(/\/setup_sheets/, async (msg) => {
     const chatId = msg.chat.id;
     if (!isAllowed(chatId)) return;
+
+    const userContext = getTelegramUserContext(msg);
+    if (!isAdmin(userContext.userId)) {
+      bot.sendMessage(chatId, '❌ Perintah ini hanya untuk admin.');
+      return;
+    }
 
     bot.sendMessage(chatId, '🎨 Sedang merapikan tampilan Google Spreadsheet...');
 
@@ -216,8 +263,9 @@ function initTelegramBot(token) {
     }
 
     const tx = parsed.data;
+    const userContext = getTelegramUserContext(msg);
     try {
-      await appendTransaction(tx);
+      await appendTransaction(tx, userContext);
       transactionHistory.push(tx);
       bot.sendMessage(chatId, transactionSummaryMessage(tx), { parse_mode: 'Markdown' });
     } catch (err) {
@@ -226,22 +274,21 @@ function initTelegramBot(token) {
     }
   });
 
-  // Handler: /undo atau /delete (hapus transaksi terakhir dari Google Sheet)
+  // Handler: /undo atau /delete (hapus transaksi terakhir user ini dari Google Sheet)
   bot.onText(/\/(undo|delete)/, async (msg) => {
     const chatId = msg.chat.id;
     if (!isAllowed(chatId)) return;
 
+    const userContext = getTelegramUserContext(msg);
     try {
-      const all = await getTransactions({});
-      if (all.length === 0) {
-        bot.sendMessage(chatId, '❌ Tidak ada transaksi untuk dihapus.');
+      const last = await deleteLastTransaction({ userId: userContext.userId });
+      if (!last) {
+        bot.sendMessage(chatId, '❌ Tidak ada transaksi milik Anda untuk dihapus.');
         return;
       }
 
-      const last = all[all.length - 1];
-      await deleteLastTransaction();
       try {
-        await deleteReceiptItemsByTransactionTimestamp(last.timestamp);
+        await deleteReceiptItemsByTransactionTimestamp(last.timestamp, { userId: userContext.userId });
       } catch (itemErr) {
         console.error('⚠️  Gagal menghapus detail item struk:', itemErr.message);
       }
@@ -249,7 +296,7 @@ function initTelegramBot(token) {
       transactionHistory.pop();
 
       bot.sendMessage(chatId,
-        `✅ *Transaksi Terakhir Dihapus!*\n\n` +
+        `✅ *Transaksi Terakhir Anda Dihapus!*\n\n` +
         `💵 Jumlah: ${last.formattedAmount || ('Rp ' + Number(last.amount).toLocaleString('id-ID'))}\n` +
         `🏷️ Kategori: ${last.category}\n` +
         `📝 Catatan: ${last.note}`,
@@ -260,7 +307,7 @@ function initTelegramBot(token) {
     }
   });
 
-  // Handler: /reset (hapus SEMUA transaksi) - butuh konfirmasi
+  // Handler: /reset (hapus SEMUA transaksi user ini) - butuh konfirmasi
   const pendingReset = {}; // chatId -> true jika menunggu konfirmasi
 
   bot.onText(/\/reset/, (msg) => {
@@ -269,8 +316,9 @@ function initTelegramBot(token) {
 
     pendingReset[chatId] = true;
     bot.sendMessage(chatId,
-      `⚠️ *PERINGATAN: Hapus Semua Data?*\n\n` +
-      `Semua transaksi di Google Sheet akan dihapus PERMANEN.\n\n` +
+      `⚠️ *PERINGATAN: Hapus Semua Data Anda?*\n\n` +
+      `Semua transaksi milik Anda akan dihapus PERMANEN dari Google Sheet.\n` +
+      `Data pengguna lain tidak akan dihapus.\n\n` +
       `Ketik *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan.`,
       { parse_mode: 'Markdown' });
   });
@@ -281,25 +329,26 @@ function initTelegramBot(token) {
     if (!isAllowed(chatId)) return;
 
     const month = match[1] || new (require('dayjs'))().format('YYYY-MM');
+    const userContext = getTelegramUserContext(msg);
 
     bot.sendMessage(chatId, '📊 Sedang membuat file Excel...');
 
     try {
-      const txs = await getTransactions({ month });
+      const txs = await getTransactions({ month, userId: userContext.userId });
       if (txs.length === 0) {
-        bot.sendMessage(chatId, `❌ Tidak ada transaksi untuk bulan ${month}`);
+        bot.sendMessage(chatId, `❌ Tidak ada transaksi Anda untuk bulan ${month}`);
         return;
       }
 
       let receiptItems = [];
       try {
-        receiptItems = await getReceiptItems({ month });
+        receiptItems = await getReceiptItems({ month, userId: userContext.userId });
       } catch (itemErr) {
         console.error('⚠️  Gagal mengambil detail item struk:', itemErr.message);
       }
 
       const filepath = await exportToExcel(txs, month, receiptItems);
-      const filename = `Keuangan_${month}.xlsx`;
+      const filename = `Keuangan_${userContext.userId}_${month}.xlsx`;
 
       // Kirim file Excel
       await bot.sendDocument(chatId, filepath, {
@@ -323,15 +372,16 @@ function initTelegramBot(token) {
     const answer = msg.text.trim().toUpperCase();
     if (answer === 'YA') {
       delete pendingReset[chatId];
+      const userContext = getTelegramUserContext(msg);
       try {
-        await clearAllTransactions();
+        await clearAllTransactions({ userId: userContext.userId });
         try {
-          await clearAllReceiptItems();
+          await clearAllReceiptItems({ userId: userContext.userId });
         } catch (itemErr) {
           console.error('⚠️  Gagal menghapus detail item struk:', itemErr.message);
         }
         transactionHistory.length = 0;
-        bot.sendMessage(chatId, '✅ *Semua data berhasil dihapus!*\n\nGoogle Sheet sekarang kosong. Anda bisa mulai mencatat dari awal.', { parse_mode: 'Markdown' });
+        bot.sendMessage(chatId, '✅ *Semua data Anda berhasil dihapus!*\n\nAnda bisa mulai mencatat transaksi dari awal.', { parse_mode: 'Markdown' });
       } catch (err) {
         console.error('❌ Error reset:', err.message);
         bot.sendMessage(chatId, `❌ Gagal reset data: ${err.message}`);
@@ -348,11 +398,12 @@ function initTelegramBot(token) {
     if (!isAllowed(chatId)) return;
 
     const month = match[1] || new (require('dayjs'))().format('YYYY-MM');
+    const userContext = getTelegramUserContext(msg);
 
     try {
-      const txs = await getTransactions({ month });
+      const txs = await getTransactions({ month, userId: userContext.userId });
       if (txs.length === 0) {
-        bot.sendMessage(chatId, `📊 Tidak ada transaksi untuk bulan ${month}.`);
+        bot.sendMessage(chatId, `📊 Tidak ada transaksi Anda untuk bulan ${month}.`);
         return;
       }
 
@@ -381,13 +432,15 @@ function initTelegramBot(token) {
     if (!isAllowed(chatId)) return;
     if (!msg.text) return; // Skip foto/media (ditangani terpisah)
     if (msg.text.startsWith('/')) return; // Skip komando
+    if (pendingReset[chatId]) return; // Skip jika sedang reset confirmation
 
     const parsed = parseTransaction(msg.text);
     if (parsed.error) return; // Abaikan teks yang tidak valid
 
     const tx = parsed.data;
+    const userContext = getTelegramUserContext(msg);
     try {
-      await appendTransaction(tx);
+      await appendTransaction(tx, userContext);
       transactionHistory.push(tx);
       bot.sendMessage(chatId, transactionSummaryMessage(tx), { parse_mode: 'Markdown' });
     } catch (err) {
@@ -485,16 +538,17 @@ function initTelegramBot(token) {
           };
         }
 
-        await appendTransaction(tx);
+        const userContext = getTelegramUserContext(msg);
+        await appendTransaction(tx, userContext);
         transactionHistory.push(tx);
 
-        const receiptId = `receipt_${Date.now()}_${chatId}`;
+        const receiptId = `receipt_${Date.now()}_${userContext.userId}`;
         const receiptItems = normalizeReceiptItems(receiptDetails, tx, receiptId);
         let itemSaveMessage = 'Detail item tidak terdeteksi.';
 
         if (receiptItems.length) {
           try {
-            await appendReceiptItems(receiptItems);
+            await appendReceiptItems(receiptItems, userContext);
             itemSaveMessage = `${receiptItems.length} detail item tersimpan.`;
           } catch (itemErr) {
             console.error('⚠️  Gagal menyimpan detail item struk:', itemErr.message);

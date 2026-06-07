@@ -4,6 +4,17 @@ const fmt = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const charts = {};
 const palette = ['#ef4444', '#f97316', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#64748b', '#ec4899', '#06b6d4'];
 
+// ====== NEW: Dashboard token handling ======
+function getDashboardToken() {
+  return new URLSearchParams(window.location.search).get('token');
+}
+
+function getApiUrl(endpoint) {
+  const token = getDashboardToken();
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return token ? `${endpoint}${separator}token=${encodeURIComponent(token)}` : endpoint;
+}
+
 const monthInput = document.getElementById('month');
 const refreshBtn = document.getElementById('refreshBtn');
 const now = new Date();
@@ -55,8 +66,16 @@ async function loadDashboard() {
   setLoading(true);
   showError('');
 
+  const token = getDashboardToken();
+  if (!token) {
+    showError('❌ Dashboard token tidak ditemukan. Silakan gunakan link dashboard dari Telegram bot.');
+    setLoading(false);
+    return;
+  }
+
   try {
-    const res = await fetch(`/api/dashboard?month=${encodeURIComponent(month)}`);
+    const res = await fetch(getApiUrl(`/api/dashboard?month=${encodeURIComponent(month)}`));
+    if (res.status === 401) throw new Error('Token dashboard tidak valid atau kadaluarsa');
     if (!res.ok) throw new Error(`API dashboard gagal (${res.status})`);
     const data = await res.json();
 
